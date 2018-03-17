@@ -1,0 +1,8 @@
+[package]
+name = "futures-retry"
+version = "0.1.0"
+authors = ["mexus <gilaldpellaeon@gmail.com>"]
+
+[dependencies]
+futures = "0.1"
+tokio-timer = "0.1"
