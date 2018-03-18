@@ -5,10 +5,12 @@ use std::time::Duration;
 use futures::Future;
 
 mod future;
+mod future_propagate;
 mod stream;
 mod stream_propagate;
 
 pub use future::FutureRetry;
+pub use future_propagate::FutureRetryPropagate;
 pub use stream::StreamRetry;
 pub use stream_propagate::StreamRetryPropagate;
 
