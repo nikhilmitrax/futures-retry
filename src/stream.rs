@@ -9,6 +9,26 @@ pub struct StreamRetry<R, S> {
     state: RetryState,
 }
 
+/// An extention trait for `Stream` which allows to use `StreamRetry` in a chain-like manner.
+pub trait StreamRetryExt<E>: Sized {
+    /// Converts the stream in a **retry stream**. See `StreamRetry::new` for details.
+    fn into_retry<R>(self, error_action: R) -> StreamRetry<R, Self>
+    where
+        R: FnMut(&E) -> RetryPolicy;
+}
+
+impl<S, T, E> StreamRetryExt<E> for S
+where
+    S: Stream<Item = Result<T, E>>,
+{
+    fn into_retry<R>(self, error_action: R) -> StreamRetry<R, Self>
+    where
+        R: FnMut(&E) -> RetryPolicy,
+    {
+        StreamRetry::new(self, error_action)
+    }
+}
+
 enum RetryState {
     WaitingForStream,
     TimerActive(tokio_timer::Sleep),
@@ -115,5 +135,14 @@ mod test {
         assert_eq!(Ok(Async::Ready(Some(Err(17)))), retry.poll());
         assert_eq!(Ok(Async::Ready(Some(Ok(19)))), retry.poll());
         assert_eq!(Ok(Async::Ready(None)), retry.poll());
+    }
+
+    #[test]
+    fn forward_ext() {
+        let mut stream = iter_ok::<_, ()>(vec![Err::<u8, u8>(17), Ok::<u8, u8>(19)])
+            .into_retry(|_| RetryPolicy::ForwardError);
+        assert_eq!(Ok(Async::Ready(Some(Err(17)))), stream.poll());
+        assert_eq!(Ok(Async::Ready(Some(Ok(19)))), stream.poll());
+        assert_eq!(Ok(Async::Ready(None)), stream.poll());
     }
 }
