@@ -2,6 +2,8 @@
 
 A simple way to retry your futures when applicable.
 
+Docs for the master branch are available on [here](https://mexus.gitlab.io/futures-retry/futures_retry/).
+
 ## License
 
 Licensed under either of
