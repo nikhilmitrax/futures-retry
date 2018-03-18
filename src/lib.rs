@@ -8,9 +8,11 @@ use futures::{Future, Stream};
 mod tests;
 mod future;
 mod stream;
+mod stream_propagate;
 
 use future::FutureRetry;
-use stream::StreamRetry;
+pub use stream::StreamRetry;
+pub use stream_propagate::StreamRetryPropagate;
 
 /// A factory trait used to create futures.
 ///
@@ -52,6 +54,21 @@ pub enum RetryPolicy {
     WaitRetry(Duration),
     /// Don't give it another try, just pass the error further to the user.
     ForwardError,
+}
+
+/// What to do when a future return an error.
+pub enum RetryPropagatePolicy<E> {
+    /// Create and poll a new future immediately.
+    ///
+    /// # Pay attention!
+    ///
+    /// Please be careful when using this variant since it might leed to a high (actually 100%) CPU
+    /// usage in case a future instantly resolved into an error.
+    Repeat,
+    /// Wait for a given duration and then make another attempt.
+    WaitRetry(Duration),
+    /// Don't give it another try, just terminate the stream with a given error.
+    ForwardError(E),
 }
 
 pub fn retry<F, R>(factory: F, error_action: R) -> FutureRetry<F, R>
