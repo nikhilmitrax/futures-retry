@@ -2,13 +2,15 @@ extern crate futures;
 extern crate tokio_timer;
 
 use std::time::Duration;
-use futures::Future;
+use futures::{Future, Stream};
 
 #[cfg(test)]
 mod tests;
 mod future;
+mod stream;
 
 use future::FutureRetry;
+use stream::StreamRetry;
 
 /// A factory trait used to create futures.
 ///
@@ -58,4 +60,12 @@ where
     R: FnMut(&<F::FutureItem as Future>::Error) -> RetryPolicy,
 {
     FutureRetry::new(factory, error_action)
+}
+
+pub fn retry_stream<R, S, T, E>(stream: S, error_action: R) -> StreamRetry<R, S>
+where
+    S: Stream<Item = Result<T, E>>,
+    R: FnMut(&E) -> RetryPolicy,
+{
+    StreamRetry::new(stream, error_action)
 }
