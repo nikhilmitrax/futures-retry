@@ -6,9 +6,9 @@ use futures::Future;
 
 #[cfg(test)]
 mod tests;
-mod impl_details;
+mod future;
 
-use impl_details::FutureRetry;
+use future::FutureRetry;
 
 /// A factory trait used to create futures.
 ///
