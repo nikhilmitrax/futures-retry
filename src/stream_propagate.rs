@@ -15,6 +15,26 @@ pub struct StreamRetryPropagate<R, S> {
     state: RetryState,
 }
 
+/// An extention trait for `Stream` which allows to use `StreamRetryPropagate` in a chain-like manner.
+pub trait StreamRetryPropagateExt<E>: Sized {
+    /// Converts the stream in a **retry stream**. See `StreamRetryPropagate::new` for details.
+    fn into_retry<R>(self, error_action: R) -> StreamRetryPropagate<R, Self>
+    where
+        R: FnMut(E) -> RetryPropagatePolicy<E>;
+}
+
+impl<S, T, E> StreamRetryPropagateExt<E> for S
+where
+    S: Stream<Item = Result<T, E>>,
+{
+    fn into_retry<R>(self, error_action: R) -> StreamRetryPropagate<R, Self>
+    where
+        R: FnMut(E) -> RetryPropagatePolicy<E>,
+    {
+        StreamRetryPropagate::new(self, error_action)
+    }
+}
+
 enum RetryState {
     WaitingForStream,
     TimerActive(tokio_timer::Sleep),
@@ -119,5 +139,12 @@ mod test {
         let stream = iter_ok(vec![Err(17u8), Ok(19u16)]);
         let mut retry = StreamRetryPropagate::new(stream, RetryPropagatePolicy::ForwardError);
         assert_eq!(Err(17u8), retry.poll());
+    }
+
+    #[test]
+    fn propagate_ext() {
+        let mut stream =
+            iter_ok(vec![Err(17u8), Ok(19u16)]).into_retry(RetryPropagatePolicy::ForwardError);
+        assert_eq!(Err(17u8), stream.poll());
     }
 }
