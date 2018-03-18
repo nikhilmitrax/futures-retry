@@ -2,15 +2,13 @@ extern crate futures;
 extern crate tokio_timer;
 
 use std::time::Duration;
-use futures::{Future, Stream};
+use futures::Future;
 
-#[cfg(test)]
-mod tests;
 mod future;
 mod stream;
 mod stream_propagate;
 
-use future::FutureRetry;
+pub use future::FutureRetry;
 pub use stream::StreamRetry;
 pub use stream_propagate::StreamRetryPropagate;
 
@@ -69,20 +67,4 @@ pub enum RetryPropagatePolicy<E> {
     WaitRetry(Duration),
     /// Don't give it another try, just terminate the stream with a given error.
     ForwardError(E),
-}
-
-pub fn retry<F, R>(factory: F, error_action: R) -> FutureRetry<F, R>
-where
-    F: FutureFactory,
-    R: FnMut(&<F::FutureItem as Future>::Error) -> RetryPolicy,
-{
-    FutureRetry::new(factory, error_action)
-}
-
-pub fn retry_stream<R, S, T, E>(stream: S, error_action: R) -> StreamRetry<R, S>
-where
-    S: Stream<Item = Result<T, E>>,
-    R: FnMut(&E) -> RetryPolicy,
-{
-    StreamRetry::new(stream, error_action)
 }
