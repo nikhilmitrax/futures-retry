@@ -1,0 +1,16 @@
+image: "rust:latest"
+
+test:cargo:
+  script:
+  - rustc --version && cargo --version
+  - cargo test --all --verbose
+
+pages:
+  script:
+  - cargo doc
+  - mv target/doc/ public/
+  artifacts:
+    paths:
+    - public
+  only:
+    - master
