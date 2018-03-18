@@ -2,6 +2,12 @@ use tokio_timer;
 use RetryPropagatePolicy;
 use futures::{Async, Future, Poll, Stream};
 
+/// We take a stream that creates `Result` objects, process the possible errors and return the
+/// result.
+///
+/// For example, if you have a `Stream` which `::Item` is `Result<T, E>` and you want to propagate
+/// the error up, so in the end you'll get a `Stream` with `::Item = T`, this is your choice. Also
+/// `E` should be convertible into `Stream::Error`.
 pub struct StreamRetryPropagate<R, S> {
     error_action: R,
     stream: S,
