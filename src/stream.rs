@@ -2,31 +2,35 @@ use tokio_timer;
 use RetryPolicy;
 use futures::{Async, Future, Poll, Stream};
 
-pub struct StreamRetry<R, S> {
-    error_action: R,
+/// Takes a stream that creates `Result` objects, process the possible errors and return the
+/// result.
+///
+/// For example, if you have a `Stream` which `::Item` is `Result<T, E>` and you want to propagate
+/// the error up, so in the end you'll get a `Stream` with `::Item = T`, this is your choice. Also
+/// `E` should be convertible into `Stream::Error`.
+pub struct StreamRetry<F, S> {
+    error_action: F,
     stream: S,
     timer: tokio_timer::Timer,
     state: RetryState,
 }
 
 /// An extention trait for `Stream` which allows to use `StreamRetry` in a chain-like manner.
-pub trait StreamRetryExt<E>: Sized {
-    /// Converts the stream in a **retry stream**. See `StreamRetry::new` for details.
-    fn into_retry<R>(self, error_action: R) -> StreamRetry<R, Self>
+pub trait StreamRetryExt: Stream {
+    /// Converts the stream into a **retry stream**. See `StreamRetry::new` for details.
+    fn into_retry<F, ExtErr>(self, error_action: F) -> StreamRetry<F, Self>
     where
-        R: FnMut(&E) -> RetryPolicy;
-}
-
-impl<S, T, E> StreamRetryExt<E> for S
-where
-    S: Stream<Item = Result<T, E>>,
-{
-    fn into_retry<R>(self, error_action: R) -> StreamRetry<R, Self>
-    where
-        R: FnMut(&E) -> RetryPolicy,
+        F: FnMut(Self::Error) -> RetryPolicy<ExtErr>,
+        Self: Sized,
     {
         StreamRetry::new(self, error_action)
     }
+}
+
+impl<S: ?Sized> StreamRetryExt for S
+where
+    S: Stream,
+{
 }
 
 enum RetryState {
@@ -34,11 +38,11 @@ enum RetryState {
     TimerActive(tokio_timer::Sleep),
 }
 
-impl<R, S> StreamRetry<R, S> {
-    pub fn new<T, E>(stream: S, error_action: R) -> Self
+impl<F, S> StreamRetry<F, S> {
+    pub fn new<ExtErr>(stream: S, error_action: F) -> Self
     where
-        S: Stream<Item = Result<T, E>>,
-        R: FnMut(&E) -> RetryPolicy,
+        S: Stream,
+        F: FnMut(S::Error) -> RetryPolicy<ExtErr>,
     {
         Self {
             error_action,
@@ -49,13 +53,13 @@ impl<R, S> StreamRetry<R, S> {
     }
 }
 
-impl<R, S, T, E> Stream for StreamRetry<R, S>
+impl<F, S, ExtErr> Stream for StreamRetry<F, S>
 where
-    S: Stream<Item = Result<T, E>>,
-    R: FnMut(&E) -> RetryPolicy,
+    S: Stream,
+    F: FnMut(S::Error) -> RetryPolicy<ExtErr>,
 {
     type Item = S::Item;
-    type Error = S::Error;
+    type Error = ExtErr;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         loop {
@@ -74,19 +78,14 @@ where
                     }
                 },
                 RetryState::WaitingForStream => match self.stream.poll() {
-                    Ok(Async::NotReady) => return Ok(Async::NotReady),
-                    Ok(Async::Ready(res)) => match res {
-                        None => return Ok(Async::Ready(None)),
-                        Some(Ok(x)) => return Ok(Async::Ready(Some(Ok(x)))),
-                        Some(Err(e)) => match (self.error_action)(&e) {
-                            RetryPolicy::ForwardError => return Ok(Async::Ready(Some(Err(e)))),
-                            RetryPolicy::Repeat => RetryState::WaitingForStream,
-                            RetryPolicy::WaitRetry(duration) => {
-                                RetryState::TimerActive(self.timer.sleep(duration))
-                            }
-                        },
+                    Ok(x) => return Ok(x),
+                    Err(e) => match (self.error_action)(e) {
+                        RetryPolicy::ForwardError(e) => return Err(e),
+                        RetryPolicy::Repeat => RetryState::WaitingForStream,
+                        RetryPolicy::WaitRetry(duration) => {
+                            RetryState::TimerActive(self.timer.sleep(duration))
+                        }
                     },
-                    Err(e) => return Err(e),
                 },
             };
             self.state = new_state;
@@ -97,52 +96,43 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use futures::stream::iter_ok;
-    use futures::Async;
+    use futures::stream::iter_result;
     use std::time::Duration;
 
     #[test]
     fn naive() {
-        let stream = iter_ok::<_, ()>(vec![Ok::<_, u8>(17), Ok::<_, u8>(19)]);
-        let mut retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat);
-        assert_eq!(Ok(Async::Ready(Some(Ok(17)))), retry.poll());
-        assert_eq!(Ok(Async::Ready(Some(Ok(19)))), retry.poll());
-        assert_eq!(Ok(Async::Ready(None)), retry.poll());
+        let stream = iter_result(vec![Ok::<_, u8>(17), Ok(19)]);
+        let retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat::<()>);
+        assert_eq!(Ok(vec![17, 19]), retry.collect().wait());
     }
 
     #[test]
     fn repeat() {
-        let stream = iter_ok::<_, ()>(vec![Err::<u8, u8>(17), Ok::<u8, u8>(19)]);
-        let mut retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat);
-        assert_eq!(Ok(Async::Ready(Some(Ok(19)))), retry.poll());
-        assert_eq!(Ok(Async::Ready(None)), retry.poll());
+        let stream = iter_result(vec![Ok(1), Err(17), Ok(19)]);
+        let retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat::<()>);
+        assert_eq!(Ok(vec![1, 19]), retry.collect().wait());
     }
 
     #[test]
     fn wait() {
-        let stream = iter_ok::<_, ()>(vec![Err::<u8, u8>(17), Ok::<u8, u8>(19)]);
-        let mut retry = StreamRetry::new(stream, |_| {
-            RetryPolicy::WaitRetry(Duration::from_millis(10))
+        let stream = iter_result(vec![Err(17), Ok(19)]);
+        let retry = StreamRetry::new(stream, |_| {
+            RetryPolicy::WaitRetry::<()>(Duration::from_millis(10))
         });
-        assert_eq!(Ok(Async::Ready(Some(Ok(19)))), retry.poll());
-        assert_eq!(Ok(Async::Ready(None)), retry.poll());
+        assert_eq!(Ok(vec![19]), retry.collect().wait());
     }
 
     #[test]
-    fn forward() {
-        let stream = iter_ok::<_, ()>(vec![Err::<u8, u8>(17), Ok::<u8, u8>(19)]);
-        let mut retry = StreamRetry::new(stream, |_| RetryPolicy::ForwardError);
-        assert_eq!(Ok(Async::Ready(Some(Err(17)))), retry.poll());
-        assert_eq!(Ok(Async::Ready(Some(Ok(19)))), retry.poll());
-        assert_eq!(Ok(Async::Ready(None)), retry.poll());
+    fn propagate() {
+        let stream = iter_result(vec![Err(17u8), Ok(19u16)]);
+        let mut retry = StreamRetry::new(stream, RetryPolicy::ForwardError);
+        assert_eq!(Err(17u8), retry.poll());
     }
 
     #[test]
-    fn forward_ext() {
-        let mut stream = iter_ok::<_, ()>(vec![Err::<u8, u8>(17), Ok::<u8, u8>(19)])
-            .into_retry(|_| RetryPolicy::ForwardError);
-        assert_eq!(Ok(Async::Ready(Some(Err(17)))), stream.poll());
-        assert_eq!(Ok(Async::Ready(Some(Ok(19)))), stream.poll());
-        assert_eq!(Ok(Async::Ready(None)), stream.poll());
+    fn propagate_ext() {
+        let mut stream =
+            iter_result(vec![Err(17u8), Ok(19u16)]).into_retry(RetryPolicy::ForwardError);
+        assert_eq!(Err(17u8), stream.poll());
     }
 }
