@@ -5,9 +5,13 @@ test:cargo:
   - rustc --version && cargo --version
   - cargo test --all --verbose
 
-check:example:
+check:listener-example:
   script:
   - cd examples/tcp-listener && cargo check --verbose
+
+check:client-example:
+  script:
+  - cd examples/tcp-client && cargo check --verbose
 
 pages:
   script:
