@@ -12,7 +12,9 @@ mod stream_propagate;
 pub use future::FutureRetry;
 pub use future_propagate::FutureRetryPropagate;
 pub use stream::StreamRetry;
+pub use stream::StreamRetryExt;
 pub use stream_propagate::StreamRetryPropagate;
+pub use stream_propagate::StreamRetryPropagateExt;
 
 /// A factory trait used to create futures.
 ///

@@ -1,0 +1,8 @@
+[package]
+name = "tcp-listener"
+version = "0.1.0"
+authors = ["mexus <gilaldpellaeon@gmail.com>"]
+
+[dependencies]
+tokio = "0.1"
+futures-retry = { path = "../../" }
