@@ -5,6 +5,10 @@ test:cargo:
   - rustc --version && cargo --version
   - cargo test --all --verbose
 
+check:example:
+  script:
+  - cd examples/tcp-listener && cargo check --verbose
+
 pages:
   script:
   - cargo doc
