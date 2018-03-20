@@ -3,15 +3,8 @@ image: "rust:latest"
 test:cargo:
   script:
   - rustc --version && cargo --version
+  - cargo build --all && cargo build --examples
   - cargo test --all --verbose
-
-check:listener-example:
-  script:
-  - cd examples/tcp-listener && cargo check --verbose
-
-check:client-example:
-  script:
-  - cd examples/tcp-client && cargo check --verbose
 
 pages:
   script:
