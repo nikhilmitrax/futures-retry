@@ -7,3 +7,6 @@ license = "MIT/Apache-2.0"
 [dependencies]
 futures = "0.1"
 tokio-timer = "0.1"
+
+[dev-dependencies]
+tokio = "0.1"

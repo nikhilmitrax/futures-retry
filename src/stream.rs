@@ -16,6 +16,49 @@ pub struct StreamRetry<F, S> {
 }
 
 /// An extention trait for `Stream` which allows to use `StreamRetry` in a chain-like manner.
+///
+/// # Example
+///
+/// This magic trait allows you to handle errors on streams in a very neat manner:
+///
+/// ```
+/// extern crate futures_retry;
+/// // ...
+/// # extern crate tokio;
+/// use futures_retry::{RetryPolicy, StreamRetryExt};
+/// # use std::io;
+/// # use std::time::Duration;
+/// # use tokio::net::{TcpListener, TcpStream};
+/// # use tokio::prelude::*;
+///
+/// fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
+///   match e.kind() {
+///     io::ErrorKind::Interrupted => RetryPolicy::Repeat,
+///     io::ErrorKind::PermissionDenied => RetryPolicy::ForwardError(e),
+///     _ => RetryPolicy::WaitRetry(Duration::from_millis(5)),
+///   }
+/// }
+///
+/// fn serve_connection(stream: TcpStream) -> Box<Future<Item = (), Error = ()> + Send> {
+///   // ...
+///   # unimplemented!()
+/// }
+///
+/// fn main() {
+///   let listener: TcpListener = // ...
+///   # TcpListener::bind(&"[::]:0".parse().unwrap()).unwrap();
+///   let server = listener.incoming()
+///     .into_retry(handle_error)
+///     .and_then(|stream| {
+///       tokio::spawn(serve_connection(stream));
+///       Ok(())
+///     })
+///     .for_each(|_| Ok(()))
+///     .map_err(|e| eprintln!("Caught an error {}", e));
+///   # let server = server.select(Ok(())).map(|(_, _)| ()).map_err(|(_, _)| ());
+///   tokio::run(server);
+/// }
+/// ```
 pub trait StreamRetryExt: Stream {
     /// Converts the stream into a **retry stream**. See `StreamRetry::new` for details.
     fn into_retry<F, ExtErr>(self, error_action: F) -> StreamRetry<F, Self>
