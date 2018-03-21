@@ -2,7 +2,12 @@
 name = "futures-retry"
 version = "0.1.0"
 authors = ["mexus <gilaldpellaeon@gmail.com>"]
+description = "Retry your Futures and Streams!"
 license = "MIT/Apache-2.0"
+keywords = ["tokio", "futures", "retry"]
+repository = "https://gitlab.com/mexus/futures-retry"
+documentation = "https://docs.rs/futures-retry/"
+readme = "README.md"
 
 [dependencies]
 futures = "0.1"
