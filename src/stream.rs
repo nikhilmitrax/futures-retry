@@ -2,12 +2,21 @@ use tokio_timer;
 use RetryPolicy;
 use futures::{Async, Future, Poll, Stream};
 
-/// Takes a stream that creates `Result` objects, process the possible errors and return the
-/// result.
+/// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
+/// poll for future stream's items with a delay.
 ///
-/// For example, if you have a `Stream` which `::Item` is `Result<T, E>` and you want to propagate
-/// the error up, so in the end you'll get a `Stream` with `::Item = T`, this is your choice. Also
-/// `E` should be convertible into `Stream::Error`.
+/// This type is similar to [`FutureRetry`](struct.FutureRetry.html), but with a different
+/// semantics. For example, if for [`FutureRetry`](struct.FutureRetry.html) we need a factory that
+/// creates `Future`s, we don't need one for `Stream`s, since `Stream` itself is a natural producer
+/// of new items, so we don't have to recreated it if an error is encountered.
+///
+/// A typical usage might be recovering from connection errors while trying to accept a connection
+/// on a TCP server.
+///
+/// A `tcp-listener` example is available in the `examples` folder.
+///
+/// Also have a look at [`StreamRetryExt`](trait.StreamRetryExt.html) trait for a more convenient
+/// usage.
 pub struct StreamRetry<F, S> {
     error_action: F,
     stream: S,

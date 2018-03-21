@@ -1,10 +1,42 @@
 use tokio_timer;
-use FutureFactory;
 use RetryPolicy;
 use futures::{Async, Future, Poll};
 
+/// A factory trait used to create futures.
+///
+/// We need a factory for the retry logic because when (and if) a future returns an error, its
+/// internal state is undefined and we can't poll on it anymore. Hence we need to create a new one.
+///
+/// By the way, this trait is implemented for any closure that returns a `Future`, so you don't
+/// have to write your own type and implement it to handle some simple cases.
+pub trait FutureFactory {
+    /// An future type that is created by the `new` method.
+    type FutureItem: Future;
+
+    /// Creates a new future. We don't need the factory to be immutable so we pass `self` as a
+    /// mutable reference.
+    fn new(&mut self) -> Self::FutureItem;
+}
+
+impl<T, F> FutureFactory for T
+where
+    T: FnMut() -> F,
+    F: Future,
+{
+    type FutureItem = F;
+
+    fn new(&mut self) -> F {
+        (*self)()
+    }
+}
+
 /// A future that transparently launches an underlying future (created by a provided factory each
 /// time) as many times as needed to get things done.
+///
+/// It is useful fot situations when you need to make several attempts, e.g. for establishing
+/// connections, RPC calls.
+///
+/// There is also a type to handle `Stream` errors: [`StreamRetry`](struct.StreamRetry.html).
 pub struct FutureRetry<F, R>
 where
     F: FutureFactory,
@@ -21,8 +53,11 @@ enum RetryState<F> {
 }
 
 impl<F: FutureFactory, R> FutureRetry<F, R> {
-    /// Creates a **retry-future** using a provided factory and a closure that decides on a
+    /// Creates a `FutureRetry` using a provided factory and a closure that decides on a
     /// retry-policy depending on an encountered error.
+    ///
+    /// Please refer to the `tcl-client` example in the `examples` folder to have a look at a
+    /// possible usage.
     ///
     /// # Arguments
     ///

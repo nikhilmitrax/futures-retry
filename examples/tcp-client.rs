@@ -8,6 +8,7 @@ use futures_retry::{FutureRetry, RetryPolicy};
 use std::time::Duration;
 
 fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
+    // This is kinda unrealistical error handling, don't use it as it is!
     match e.kind() {
         io::ErrorKind::Interrupted
         | io::ErrorKind::ConnectionRefused
