@@ -1,7 +1,7 @@
 # futures-retry
 
-![crates.io](https://img.shields.io/crates/v/futures-retry.svg)
-![docs.rs](https://docs.rs/futures-retry/badge.svg)
+[![crates.io](https://img.shields.io/crates/v/futures-retry.svg)](https://crates.io/crates/futures-retry)
+[![docs.rs](https://docs.rs/futures-retry/badge.svg)](https://docs.rs/futures-retry)
 
 [[Release docs]](https://docs.rs/futures-retry/)
 
