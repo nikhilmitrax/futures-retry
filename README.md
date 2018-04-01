@@ -1,5 +1,6 @@
 # futures-retry
 
+[![pipeline status](https://gitlab.com/mexus/futures-retry/badges/master/pipeline.svg)](https://gitlab.com/mexus/futures-retry/commits/master)
 [![crates.io](https://img.shields.io/crates/v/futures-retry.svg)](https://crates.io/crates/futures-retry)
 [![docs.rs](https://docs.rs/futures-retry/badge.svg)](https://docs.rs/futures-retry)
 
