@@ -17,6 +17,8 @@
 //! Suggestions and critiques are welcome!
 
 extern crate futures;
+#[cfg(test)]
+extern crate tokio;
 extern crate tokio_timer;
 
 use std::time::Duration;

@@ -1,6 +1,7 @@
 use tokio_timer;
 use RetryPolicy;
 use futures::{Async, Future, Poll, Stream};
+use std::time::Instant;
 
 /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
 /// poll for future stream's items with a delay.
@@ -20,7 +21,6 @@ use futures::{Async, Future, Poll, Stream};
 pub struct StreamRetry<F, S> {
     error_action: F,
     stream: S,
-    timer: tokio_timer::Timer,
     state: RetryState,
 }
 
@@ -87,7 +87,7 @@ where
 
 enum RetryState {
     WaitingForStream,
-    TimerActive(tokio_timer::Sleep),
+    TimerActive(tokio_timer::Delay),
 }
 
 impl<F, S> StreamRetry<F, S> {
@@ -99,7 +99,6 @@ impl<F, S> StreamRetry<F, S> {
         Self {
             error_action,
             stream,
-            timer: tokio_timer::Timer::default(),
             state: RetryState::WaitingForStream,
         }
     }
@@ -116,7 +115,7 @@ where
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         loop {
             let new_state = match self.state {
-                RetryState::TimerActive(ref mut sleep) => match sleep.poll() {
+                RetryState::TimerActive(ref mut delay) => match delay.poll() {
                     Ok(Async::Ready(())) => RetryState::WaitingForStream,
                     Ok(Async::NotReady) => return Ok(Async::NotReady),
                     Err(e) => {
@@ -134,9 +133,9 @@ where
                     Err(e) => match (self.error_action)(e) {
                         RetryPolicy::ForwardError(e) => return Err(e),
                         RetryPolicy::Repeat => RetryState::WaitingForStream,
-                        RetryPolicy::WaitRetry(duration) => {
-                            RetryState::TimerActive(self.timer.sleep(duration))
-                        }
+                        RetryPolicy::WaitRetry(duration) => RetryState::TimerActive(
+                            tokio_timer::Delay::new(Instant::now() + duration),
+                        ),
                     },
                 },
             };
@@ -150,6 +149,7 @@ mod test {
     use super::*;
     use futures::stream::iter_result;
     use std::time::Duration;
+    use tokio;
 
     #[test]
     fn naive() {
@@ -170,8 +170,12 @@ mod test {
         let stream = iter_result(vec![Err(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| {
             RetryPolicy::WaitRetry::<()>(Duration::from_millis(10))
-        });
-        assert_eq!(Ok(vec![19]), retry.collect().wait());
+        }).collect()
+            .then(|x| {
+                assert_eq!(Ok(vec![19]), x);
+                Ok(())
+            });
+        tokio::run(retry);
     }
 
     #[test]

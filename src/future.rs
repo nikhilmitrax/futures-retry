@@ -1,6 +1,7 @@
 use tokio_timer;
 use RetryPolicy;
 use futures::{Async, Future, Poll};
+use std::time::Instant;
 
 /// A factory trait used to create futures.
 ///
@@ -43,13 +44,12 @@ where
 {
     factory: F,
     error_action: R,
-    timer: tokio_timer::Timer,
     state: RetryState<F::FutureItem>,
 }
 
 enum RetryState<F> {
     WaitingForFuture(F),
-    TimerActive(tokio_timer::Sleep),
+    TimerActive(tokio_timer::Delay),
 }
 
 impl<F: FutureFactory, R> FutureRetry<F, R> {
@@ -73,7 +73,6 @@ impl<F: FutureFactory, R> FutureRetry<F, R> {
         Self {
             factory,
             error_action,
-            timer: tokio_timer::Timer::default(),
             state: RetryState::WaitingForFuture(current_future),
         }
     }
@@ -89,7 +88,7 @@ where
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             let new_state = match self.state {
-                RetryState::TimerActive(ref mut sleep) => match sleep.poll() {
+                RetryState::TimerActive(ref mut delay) => match delay.poll() {
                     Ok(Async::Ready(())) => RetryState::WaitingForFuture(self.factory.new()),
                     Ok(Async::NotReady) => return Ok(Async::NotReady),
                     Err(e) => {
@@ -107,9 +106,9 @@ where
                     Err(e) => match (self.error_action)(e) {
                         RetryPolicy::ForwardError(e) => return Err(e),
                         RetryPolicy::Repeat => RetryState::WaitingForFuture(self.factory.new()),
-                        RetryPolicy::WaitRetry(duration) => {
-                            RetryState::TimerActive(self.timer.sleep(duration))
-                        }
+                        RetryPolicy::WaitRetry(duration) => RetryState::TimerActive(
+                            tokio_timer::Delay::new(Instant::now() + duration),
+                        ),
                     },
                 },
             };
@@ -123,6 +122,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
     use futures::future::{err, ok};
+    use tokio;
 
     /// Just a help type for the tests.
     struct FutureIterator<F>(F);
@@ -158,12 +158,15 @@ mod tests {
     fn more_complicated_wait() {
         let f = FutureRetry::new::<u8>(FutureIterator(vec![err(2u8), ok(3u8)].into_iter()), |_| {
             RetryPolicy::WaitRetry(Duration::from_millis(10))
+        }).then(|x| {
+            assert_eq!(Ok(3u8), x);
+            Ok(())
         });
-        assert_eq!(Ok(3u8), f.wait());
+        tokio::run(f);
     }
 
     #[test]
-    fn more_complicated_repeate() {
+    fn more_complicated_repeat() {
         let f = FutureRetry::new(FutureIterator(vec![err(2u8), ok(3u8)].into_iter()), |_| {
             RetryPolicy::Repeat::<u8>
         });

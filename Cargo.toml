@@ -11,7 +11,7 @@ readme = "README.md"
 
 [dependencies]
 futures = "0.1"
-tokio-timer = "0.1"
+tokio-timer = "0.2"
 
 [dev-dependencies]
 tokio = "0.1"
