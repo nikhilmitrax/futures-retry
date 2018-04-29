@@ -32,7 +32,7 @@ fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + S
 fn main() {
   let listener: TcpListener = // ...
   let server = listener.incoming()
-    .into_retry(handle_error) // Magic happens here
+    .retry(handle_error) // Magic happens here
     .and_then(|stream| {
       tokio::spawn(serve_connection(stream));
       Ok(())

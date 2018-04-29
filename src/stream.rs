@@ -57,7 +57,7 @@ pub struct StreamRetry<F, S> {
 ///   let listener: TcpListener = // ...
 ///   # TcpListener::bind(&"[::]:0".parse().unwrap()).unwrap();
 ///   let server = listener.incoming()
-///     .into_retry(handle_error)
+///     .retry(handle_error)
 ///     .and_then(|stream| {
 ///       tokio::spawn(serve_connection(stream));
 ///       Ok(())
@@ -70,12 +70,22 @@ pub struct StreamRetry<F, S> {
 /// ```
 pub trait StreamRetryExt: Stream {
     /// Converts the stream into a **retry stream**. See `StreamRetry::new` for details.
-    fn into_retry<F, ExtErr>(self, error_action: F) -> StreamRetry<F, Self>
+    fn retry<F, ExtErr>(self, error_action: F) -> StreamRetry<F, Self>
     where
         F: FnMut(Self::Error) -> RetryPolicy<ExtErr>,
         Self: Sized,
     {
         StreamRetry::new(self, error_action)
+    }
+
+    #[deprecated(since = "0.1.4", note = "please use `.retry()` instead")]
+    /// Converts the stream into a **retry stream**. See `StreamRetry::new` for details.
+    fn into_retry<F, ExtErr>(self, error_action: F) -> StreamRetry<F, Self>
+    where
+        F: FnMut(Self::Error) -> RetryPolicy<ExtErr>,
+        Self: Sized,
+    {
+        self.retry(error_action)
     }
 }
 
@@ -187,8 +197,7 @@ mod test {
 
     #[test]
     fn propagate_ext() {
-        let mut stream =
-            iter_result(vec![Err(17u8), Ok(19u16)]).into_retry(RetryPolicy::ForwardError);
+        let mut stream = iter_result(vec![Err(17u8), Ok(19u16)]).retry(RetryPolicy::ForwardError);
         assert_eq!(Err(17u8), stream.poll());
     }
 }

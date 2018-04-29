@@ -12,7 +12,7 @@ fn main() {
     let tcp = TcpListener::bind(&addr).unwrap();
 
     let server = tcp.incoming()
-        .into_retry(|e| match e.kind() {
+        .retry(|e| match e.kind() {
             io::ErrorKind::Interrupted
             | io::ErrorKind::ConnectionRefused
             | io::ErrorKind::ConnectionReset
