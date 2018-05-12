@@ -77,16 +77,6 @@ pub trait StreamRetryExt: Stream {
     {
         StreamRetry::new(self, error_action)
     }
-
-    #[deprecated(since = "0.1.4", note = "please use `.retry()` instead")]
-    /// Converts the stream into a **retry stream**. See `StreamRetry::new` for details.
-    fn into_retry<F, ExtErr>(self, error_action: F) -> StreamRetry<F, Self>
-    where
-        F: FnMut(Self::Error) -> RetryPolicy<ExtErr>,
-        Self: Sized,
-    {
-        self.retry(error_action)
-    }
 }
 
 impl<S: ?Sized> StreamRetryExt for S
