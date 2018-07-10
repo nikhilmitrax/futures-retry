@@ -48,9 +48,9 @@ pub struct StreamRetry<F, S> {
 ///   }
 /// }
 ///
-/// fn serve_connection(stream: TcpStream) -> Box<Future<Item = (), Error = ()> + Send> {
+/// fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
 ///   // ...
-///   # unimplemented!()
+///   # future::result(Ok(()))
 /// }
 ///
 /// fn main() {

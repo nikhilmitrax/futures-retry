@@ -24,7 +24,6 @@ fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
   }
 }
 
-// Use `Box<...>` instead of `impl ...` if your rust version doesn't support `impl Trait`.
 fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
   // ...
 }
