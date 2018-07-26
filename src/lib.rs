@@ -16,6 +16,8 @@
 //!
 //! Suggestions and critiques are welcome!
 
+#![deny(missing_docs)]
+
 extern crate futures;
 #[cfg(test)]
 extern crate tokio;

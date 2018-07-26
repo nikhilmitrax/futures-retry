@@ -87,6 +87,19 @@ enum RetryState {
 }
 
 impl<F, S> StreamRetry<F, S> {
+    /// Creates a `StreamRetry` using a provided stream and a closure that decides on a
+    /// retry-policy depending on an encountered error.
+    ///
+    /// Please refer to the `tcp-listener` example in the `examples` folder to have a look at a
+    /// possible usage or to a very convenient extension trait
+    /// [`StreamRetryExt`](trait.StreamRetryExt.html).
+    ///
+    /// # Arguments
+    ///
+    /// * `stream`: a stream of future items,
+    /// * `error_action`: a closure that accepts an error and decides which route to take: simply
+    ///                   try again, wait and then try, or give up (on a critical error for
+    ///                   exapmle).
     pub fn new<ExtErr>(stream: S, error_action: F) -> Self
     where
         S: Stream,

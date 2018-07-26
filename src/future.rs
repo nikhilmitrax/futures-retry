@@ -56,13 +56,13 @@ impl<F: FutureFactory, R> FutureRetry<F, R> {
     /// Creates a `FutureRetry` using a provided factory and a closure that decides on a
     /// retry-policy depending on an encountered error.
     ///
-    /// Please refer to the `tcl-client` example in the `examples` folder to have a look at a
+    /// Please refer to the `tcp-client` example in the `examples` folder to have a look at a
     /// possible usage.
     ///
     /// # Arguments
     ///
     /// * `factory`: a factory that creates futures,
-    /// * `error_action`: a closure that accepts and error and decides which route to take: simply
+    /// * `error_action`: a closure that accepts an error and decides which route to take: simply
     ///                   try again, wait and then try, or give up (on a critical error for
     ///                   exapmle).
     pub fn new<ExtErr>(mut factory: F, error_action: R) -> Self
