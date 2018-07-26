@@ -1,7 +1,7 @@
-use tokio_timer;
-use RetryPolicy;
 use futures::{Async, Future, Poll};
 use std::time::Instant;
+use tokio_timer;
+use RetryPolicy;
 
 /// A factory trait used to create futures.
 ///
@@ -120,8 +120,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use futures::future::{err, ok};
+    use std::time::Duration;
     use tokio;
 
     /// Just a help type for the tests.

@@ -1,11 +1,11 @@
 extern crate futures_retry;
 extern crate tokio;
 
-use tokio::prelude::*;
-use tokio::io;
-use tokio::net::TcpStream;
 use futures_retry::{FutureRetry, RetryPolicy};
 use std::time::Duration;
+use tokio::io;
+use tokio::net::TcpStream;
+use tokio::prelude::*;
 
 fn handle_connection_error(e: io::Error) -> RetryPolicy<io::Error> {
     // This is kinda unrealistical error handling, don't use it as it is!

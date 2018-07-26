@@ -1,7 +1,7 @@
-use tokio_timer;
-use RetryPolicy;
 use futures::{Async, Future, Poll, Stream};
 use std::time::Instant;
+use tokio_timer;
+use RetryPolicy;
 
 /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
 /// poll for future stream's items with a delay.
@@ -79,11 +79,7 @@ pub trait StreamRetryExt: Stream {
     }
 }
 
-impl<S: ?Sized> StreamRetryExt for S
-where
-    S: Stream,
-{
-}
+impl<S: ?Sized> StreamRetryExt for S where S: Stream {}
 
 enum RetryState {
     WaitingForStream,

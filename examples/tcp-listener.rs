@@ -1,17 +1,18 @@
 extern crate futures_retry;
 extern crate tokio;
 
-use tokio::prelude::*;
-use tokio::io;
-use tokio::net::TcpListener;
 use futures_retry::{RetryPolicy, StreamRetryExt};
 use std::time::Duration;
+use tokio::io;
+use tokio::net::TcpListener;
+use tokio::prelude::*;
 
 fn main() {
     let addr = "127.0.0.1:12345".parse().unwrap();
     let tcp = TcpListener::bind(&addr).unwrap();
 
-    let server = tcp.incoming()
+    let server = tcp
+        .incoming()
         .retry(|e| match e.kind() {
             io::ErrorKind::Interrupted
             | io::ErrorKind::ConnectionRefused
