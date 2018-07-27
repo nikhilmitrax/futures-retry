@@ -1,7 +1,7 @@
 use futures::{Async, Future, Poll};
 use std::time::Instant;
 use tokio_timer;
-use RetryPolicy;
+use {ErrorHandler, RetryPolicy};
 
 /// A factory trait used to create futures.
 ///
@@ -53,8 +53,8 @@ enum RetryState<F> {
 }
 
 impl<F: FutureFactory, R> FutureRetry<F, R> {
-    /// Creates a `FutureRetry` using a provided factory and a closure that decides on a
-    /// retry-policy depending on an encountered error.
+    /// Creates a `FutureRetry` using a provided factory and an object of `ErrorHandler` type that
+    /// decides on a retry-policy depending on an encountered error.
     ///
     /// Please refer to the `tcp-client` example in the `examples` folder to have a look at a
     /// possible usage.
@@ -62,13 +62,10 @@ impl<F: FutureFactory, R> FutureRetry<F, R> {
     /// # Arguments
     ///
     /// * `factory`: a factory that creates futures,
-    /// * `error_action`: a closure that accepts an error and decides which route to take: simply
+    /// * `error_action`: a type that handles an error and decides which route to take: simply
     ///                   try again, wait and then try, or give up (on a critical error for
     ///                   exapmle).
-    pub fn new<ExtErr>(mut factory: F, error_action: R) -> Self
-    where
-        R: FnMut(<F::FutureItem as Future>::Error) -> RetryPolicy<ExtErr>,
-    {
+    pub fn new(mut factory: F, error_action: R) -> Self {
         let current_future = factory.new();
         Self {
             factory,
@@ -78,12 +75,12 @@ impl<F: FutureFactory, R> FutureRetry<F, R> {
     }
 }
 
-impl<F: FutureFactory, R, ExtErr> Future for FutureRetry<F, R>
+impl<F: FutureFactory, R> Future for FutureRetry<F, R>
 where
-    R: FnMut(<F::FutureItem as Future>::Error) -> RetryPolicy<ExtErr>,
+    R: ErrorHandler<<F::FutureItem as Future>::Error>,
 {
     type Item = <<F as FutureFactory>::FutureItem as Future>::Item;
-    type Error = ExtErr;
+    type Error = R::OutError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
@@ -103,7 +100,7 @@ where
                 },
                 RetryState::WaitingForFuture(ref mut future) => match future.poll() {
                     Ok(x) => return Ok(x),
-                    Err(e) => match (self.error_action)(e) {
+                    Err(e) => match self.error_action.handle(e) {
                         RetryPolicy::ForwardError(e) => return Err(e),
                         RetryPolicy::Repeat => RetryState::WaitingForFuture(self.factory.new()),
                         RetryPolicy::WaitRetry(duration) => RetryState::TimerActive(
@@ -156,8 +153,8 @@ mod tests {
 
     #[test]
     fn more_complicated_wait() {
-        let f = FutureRetry::new::<u8>(FutureIterator(vec![err(2u8), ok(3u8)].into_iter()), |_| {
-            RetryPolicy::WaitRetry(Duration::from_millis(10))
+        let f = FutureRetry::new(FutureIterator(vec![err(2u8), ok(3u8)].into_iter()), |_| {
+            RetryPolicy::WaitRetry::<u8>(Duration::from_millis(10))
         }).then(|x| {
             assert_eq!(Ok(3u8), x);
             Ok(())

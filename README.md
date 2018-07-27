@@ -8,8 +8,25 @@
 
 [[Master docs]](https://mexus.gitlab.io/futures-retry/futures_retry/)
 
-A simple crate that helps you to retry your `Future`s and `Stream`s in a neat
-and simple way.
+A tool that helps you retry your future :) Well, `Future`s and `Stream`s, to be precise.
+
+It's quite a common task when you need to repeat some action if you've got an error, be it a
+connection timeout or some temporary OS error.
+
+When you do stuff in a synchronous manner it's quite easy to implement the attempts logic, but
+when it comes to asynchronous programming you suddenly need to write a fool load of a
+boilerplate code, introduce state machines and everything.
+
+This library aims to make your life easier and let you write more straightword and nice code,
+concentrating on buisness logic rathen than on handling all the mess.
+
+I was inspired to write this library after coming over a [`hyper`
+issue](https://github.com/hyperium/hyper/issues/1358), and I came to an understanding that the
+problem is more common than I used to think.
+
+For examples have a look in the `examples/` folder in the git repo.
+
+Suggestions and critiques are welcome!
 
 ```rust
 extern crate futures_retry;
@@ -25,11 +42,12 @@ fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
 }
 
 fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
-  // ...
+  # future::ok(())
 }
 
 fn main() {
-  let listener: TcpListener = // ...
+  # let addr = "127.0.0.1:12345".parse().unwrap();
+  let listener =TcpListener::bind(&addr).unwrap();
   let server = listener.incoming()
     .retry(handle_error) // Magic happens here
     .and_then(|stream| {
@@ -38,11 +56,13 @@ fn main() {
     })
     .for_each(|_| Ok(()))
     .map_err(|e| eprintln!("Caught an error {}", e));
+  # // This nasty hack is required to exit immediately when running the doc tests.
+  # let server = future::ok(()).select(server).map(|_| ()).map_err(|_| ());
   tokio::run(server);
 }
 ```
 
-## License
+### License
 
 Licensed under either of
 
@@ -51,8 +71,10 @@ Licensed under either of
 
 at your option.
 
-### Contribution
+#### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
 additional terms or conditions.
+
+License: MIT/Apache-2.0

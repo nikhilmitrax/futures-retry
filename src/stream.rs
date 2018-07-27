@@ -1,7 +1,7 @@
 use futures::{Async, Future, Poll, Stream};
 use std::time::Instant;
 use tokio_timer;
-use RetryPolicy;
+use {ErrorHandler, RetryPolicy};
 
 /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
 /// poll for future stream's items with a delay.
@@ -70,9 +70,8 @@ pub struct StreamRetry<F, S> {
 /// ```
 pub trait StreamRetryExt: Stream {
     /// Converts the stream into a **retry stream**. See `StreamRetry::new` for details.
-    fn retry<F, ExtErr>(self, error_action: F) -> StreamRetry<F, Self>
+    fn retry<F>(self, error_action: F) -> StreamRetry<F, Self>
     where
-        F: FnMut(Self::Error) -> RetryPolicy<ExtErr>,
         Self: Sized,
     {
         StreamRetry::new(self, error_action)
@@ -87,8 +86,8 @@ enum RetryState {
 }
 
 impl<F, S> StreamRetry<F, S> {
-    /// Creates a `StreamRetry` using a provided stream and a closure that decides on a
-    /// retry-policy depending on an encountered error.
+    /// Creates a `StreamRetry` using a provided stream and an object of `ErrorHandler` type that
+    /// decides on a retry-policy depending on an encountered error.
     ///
     /// Please refer to the `tcp-listener` example in the `examples` folder to have a look at a
     /// possible usage or to a very convenient extension trait
@@ -97,13 +96,12 @@ impl<F, S> StreamRetry<F, S> {
     /// # Arguments
     ///
     /// * `stream`: a stream of future items,
-    /// * `error_action`: a closure that accepts an error and decides which route to take: simply
+    /// * `error_action`: a type that handles an error and decides which route to take: simply
     ///                   try again, wait and then try, or give up (on a critical error for
     ///                   exapmle).
-    pub fn new<ExtErr>(stream: S, error_action: F) -> Self
+    pub fn new(stream: S, error_action: F) -> Self
     where
         S: Stream,
-        F: FnMut(S::Error) -> RetryPolicy<ExtErr>,
     {
         Self {
             error_action,
@@ -113,13 +111,13 @@ impl<F, S> StreamRetry<F, S> {
     }
 }
 
-impl<F, S, ExtErr> Stream for StreamRetry<F, S>
+impl<F, S> Stream for StreamRetry<F, S>
 where
     S: Stream,
-    F: FnMut(S::Error) -> RetryPolicy<ExtErr>,
+    F: ErrorHandler<S::Error>,
 {
     type Item = S::Item;
-    type Error = ExtErr;
+    type Error = F::OutError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         loop {
@@ -139,7 +137,7 @@ where
                 },
                 RetryState::WaitingForStream => match self.stream.poll() {
                     Ok(x) => return Ok(x),
-                    Err(e) => match (self.error_action)(e) {
+                    Err(e) => match self.error_action.handle(e) {
                         RetryPolicy::ForwardError(e) => return Err(e),
                         RetryPolicy::Repeat => RetryState::WaitingForStream,
                         RetryPolicy::WaitRetry(duration) => RetryState::TimerActive(

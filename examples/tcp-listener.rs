@@ -13,7 +13,7 @@ fn main() {
 
     let server = tcp
         .incoming()
-        .retry(|e| match e.kind() {
+        .retry(|e: io::Error| match e.kind() {
             io::ErrorKind::Interrupted
             | io::ErrorKind::ConnectionRefused
             | io::ErrorKind::ConnectionReset

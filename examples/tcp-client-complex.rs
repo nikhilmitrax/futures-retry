@@ -1,41 +1,57 @@
 extern crate futures_retry;
 extern crate tokio;
 
-use futures_retry::{FutureRetry, RetryPolicy};
+use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
-/// Handles an I/O error.
-fn handle_io_error(e: io::Error, attempts_left: usize) -> RetryPolicy<io::Error> {
-    println!("{} attempts left", attempts_left);
-    match e.kind() {
-        io::ErrorKind::Interrupted
-        | io::ErrorKind::ConnectionReset
-        | io::ErrorKind::ConnectionAborted
-        | io::ErrorKind::NotConnected
-        | io::ErrorKind::BrokenPipe => RetryPolicy::Repeat,
-        io::ErrorKind::ConnectionRefused => RetryPolicy::WaitRetry(Duration::from_secs(5)),
-        _ => RetryPolicy::ForwardError(e),
+/// An I/O handler that counts attempts.
+struct IoHandler<D> {
+    max_attempts: usize,
+    current_attempt: usize,
+    display_name: D,
+}
+
+impl<D> IoHandler<D> {
+    fn new(max_attempts: usize, display_name: D) -> Self {
+        IoHandler {
+            max_attempts,
+            current_attempt: 0,
+            display_name,
+        }
     }
 }
 
-/// Creates a closure-like instance that will handle an error for a limited amount of times, e.g.
-/// after reaching the limit an error will be simply forwarded.
-fn make_limited_handler(
-    attempts: usize,
-    mut handler: impl FnMut(io::Error, usize) -> RetryPolicy<io::Error>,
-) -> impl FnMut(io::Error) -> RetryPolicy<io::Error> {
-    let mut attempts_left = attempts;
-    move |e| {
-        println!("Attempt {}/{}", (attempts - attempts_left + 1), attempts);
-        if attempts_left == 1 {
-            RetryPolicy::ForwardError(e)
-        } else {
-            attempts_left -= 1;
-            handler(e, attempts_left)
+impl<D> ErrorHandler<io::Error> for IoHandler<D>
+where
+    D: ::std::fmt::Display,
+{
+    type OutError = io::Error;
+
+    fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
+        self.current_attempt += 1;
+        if self.current_attempt > self.max_attempts {
+            eprintln!(
+                "[{}] All attempts ({}) have been used",
+                self.display_name, self.max_attempts
+            );
+            return RetryPolicy::ForwardError(e);
+        }
+        eprintln!(
+            "[{}] Attempt {}/{} has failed",
+            self.display_name, self.current_attempt, self.max_attempts
+        );
+        match e.kind() {
+            io::ErrorKind::Interrupted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::BrokenPipe => RetryPolicy::Repeat,
+            io::ErrorKind::ConnectionRefused => RetryPolicy::WaitRetry(Duration::from_secs(5)),
+            _ => RetryPolicy::ForwardError(e),
         }
     }
 }
@@ -49,7 +65,7 @@ fn connect_and_send(addr: SocketAddr) -> impl Future<Item = (), Error = io::Erro
             println!("Trying to connect to {}", addr);
             TcpStream::connect(&addr)
         },
-        make_limited_handler(3, handle_io_error),
+        IoHandler::new(3, "Establishing a connection"),
     );
     connection.and_then(|tcp| {
         let (_, mut writer) = tcp.split();
@@ -62,11 +78,15 @@ fn main() {
     // Try to connect and send data 2 times.
     let action = FutureRetry::new(
         move || {
-            println!("Trying to connect and to send data");
+            println!("Trying to execute a client");
             connect_and_send(addr)
         },
-        make_limited_handler(2, handle_io_error),
+        IoHandler::new(2, "Running a client"),
     ).map_err(|e| eprintln!("Connect and send has failed: {}", e))
         .map(|_| println!("Done"));
+    // To check out that attempts logic works as expected, launch a listener within 30-seconds time
+    // period after launching the example, e.g. on linux:
+    //
+    // % nc -l 127.0.0.1 12345
     tokio::run(action);
 }
