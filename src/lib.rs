@@ -45,6 +45,7 @@
 //! }
 //!
 //! fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
+//!   // ...
 //!   # future::ok(())
 //! }
 //!
