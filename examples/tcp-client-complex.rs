@@ -59,7 +59,7 @@ fn connect_and_send(addr: SocketAddr) -> impl Future<Item = (), Error = io::Erro
 
 fn main() {
     let addr = "127.0.0.1:12345".parse().unwrap();
-    /// Try to connect and send data 2 times.
+    // Try to connect and send data 2 times.
     let action = FutureRetry::new(
         move || {
             println!("Trying to connect and to send data");
