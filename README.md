@@ -42,6 +42,7 @@ fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
 }
 
 fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
+  // ...
   # future::ok(())
 }
 
