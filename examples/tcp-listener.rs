@@ -27,14 +27,10 @@ fn main() {
             let (reader, writer) = tcp.split();
             // Copy the data back to the client
             let conn = io::copy(reader, writer)
-            // print what happened
-            .map(|(n, _, _)| {
-                println!("Wrote {} bytes", n)
-            })
-            // Handle any errors
-            .map_err(|err| {
-                println!("Can't copy data: IO error {:?}", err)
-            });
+                // print what happened
+                .map(|(n, _, _)| println!("Wrote {} bytes", n))
+                // Handle any errors
+                .map_err(|err| println!("Can't copy data: IO error {:?}", err));
 
             // Spawn the future as a concurrent task
             tokio::spawn(conn);

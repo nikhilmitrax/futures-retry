@@ -177,11 +177,12 @@ mod test {
         let stream = iter_result(vec![Err(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| {
             RetryPolicy::WaitRetry::<()>(Duration::from_millis(10))
-        }).collect()
-            .then(|x| {
-                assert_eq!(Ok(vec![19]), x);
-                Ok(())
-            });
+        })
+        .collect()
+        .then(|x| {
+            assert_eq!(Ok(vec![19]), x);
+            Ok(())
+        });
         tokio::run(retry);
     }
 

@@ -155,7 +155,8 @@ mod tests {
     fn more_complicated_wait() {
         let f = FutureRetry::new(FutureIterator(vec![err(2u8), ok(3u8)].into_iter()), |_| {
             RetryPolicy::WaitRetry::<u8>(Duration::from_millis(10))
-        }).then(|x| {
+        })
+        .then(|x| {
             assert_eq!(Ok(3u8), x);
             Ok(())
         });

@@ -82,8 +82,9 @@ fn main() {
             connect_and_send(addr)
         },
         IoHandler::new(2, "Running a client"),
-    ).map_err(|e| eprintln!("Connect and send has failed: {}", e))
-        .map(|_| println!("Done"));
+    )
+    .map_err(|e| eprintln!("Connect and send has failed: {}", e))
+    .map(|_| println!("Done"));
     // To check out that attempts logic works as expected, launch a listener within 30-seconds time
     // period after launching the example, e.g. on linux:
     //
