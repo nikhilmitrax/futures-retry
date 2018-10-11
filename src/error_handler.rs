@@ -3,10 +3,10 @@ use RetryPolicy;
 /// An error handler trait.
 ///
 /// Please note that this trait is implemented for any `FnMut` closure with a compatible signature,
-/// so for some simple cases you could simply use a closure instead of creating your own type and
+/// so for some simple cases you might simply use a closure instead of creating your own type and
 /// implementing this trait for it.
 ///
-/// Here's an example of an error handler that counts error attempts.
+/// Here's an example of an error handler that counts *consecutive* error attempts.
 ///
 /// ```
 /// extern crate futures_retry;
@@ -15,13 +15,15 @@ use RetryPolicy;
 /// use std::time::Duration;
 ///
 /// pub struct CustomHandler {
-///     attempts_left: usize,
+///     attempt: usize,
+///     max_attempts: usize,
 /// }
 ///
 /// impl CustomHandler {
 ///     pub fn new(attempts: usize) -> Self {
 ///         Self {
-///             attempts_left: attempts,
+///             attempt: 0,
+///             max_attempts: attempts,
 ///         }
 ///     }
 /// }
@@ -30,16 +32,20 @@ use RetryPolicy;
 ///     type OutError = io::Error;
 ///
 ///     fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
-///         if self.attempts_left == 0 {
+///         if self.attempt == self.max_attempts {
 ///             eprintln!("No attempts left");
 ///             return RetryPolicy::ForwardError(e);
 ///         }
-///         self.attempts_left -= 1;
+///         self.attempt += 1;
 ///         match e.kind() {
 ///             io::ErrorKind::ConnectionRefused => RetryPolicy::WaitRetry(Duration::from_secs(1)),
 ///             io::ErrorKind::TimedOut => RetryPolicy::Repeat,
 ///             _ => RetryPolicy::ForwardError(e),
 ///         }
+///     }
+///
+///     fn ok(&mut self) {
+///         self.attempt = 0;
 ///     }
 /// }
 /// #
@@ -54,6 +60,15 @@ pub trait ErrorHandler<InError> {
     /// Refer to the [`RetryPolicy`](enum.RetryPolicy.html) type to understand what this method
     /// might return.
     fn handle(&mut self, InError) -> RetryPolicy<Self::OutError>;
+
+    /// This method is called on a successful execution (before returning an item) of the underlying
+    /// future/stream.
+    ///
+    /// One can use this method to reset an internal state, like a consecutive errors counter for
+    /// example.
+    ///
+    /// By default the method is a no-op.
+    fn ok(&mut self) {}
 }
 
 impl<InError, F, OutError> ErrorHandler<InError> for F

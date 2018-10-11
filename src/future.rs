@@ -99,7 +99,10 @@ where
                     }
                 },
                 RetryState::WaitingForFuture(ref mut future) => match future.poll() {
-                    Ok(x) => return Ok(x),
+                    Ok(x) => {
+                        self.error_action.ok();
+                        return Ok(x);
+                    }
                     Err(e) => match self.error_action.handle(e) {
                         RetryPolicy::ForwardError(e) => return Err(e),
                         RetryPolicy::Repeat => RetryState::WaitingForFuture(self.factory.new()),

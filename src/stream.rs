@@ -136,7 +136,10 @@ where
                     }
                 },
                 RetryState::WaitingForStream => match self.stream.poll() {
-                    Ok(x) => return Ok(x),
+                    Ok(x) => {
+                        self.error_action.ok();
+                        return Ok(x);
+                    }
                     Err(e) => match self.error_action.handle(e) {
                         RetryPolicy::ForwardError(e) => return Err(e),
                         RetryPolicy::Repeat => RetryState::WaitingForStream,

@@ -33,6 +33,9 @@ extern crate futures_retry;
 // ...
 use futures_retry::{RetryPolicy, StreamRetryExt};
 
+// In this example we use a free function to handle errors, while in your project you have
+// more options: for simple cases a simple closure will do, for complex cases you might go
+// as far as implementing an `ErrorHandler` trait for a custom type with some complex logic.
 fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
   match e.kind() {
     io::ErrorKind::Interrupted => RetryPolicy::Repeat,
