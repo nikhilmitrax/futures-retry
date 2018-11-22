@@ -10,8 +10,8 @@ documentation = "https://docs.rs/futures-retry/"
 readme = "README.md"
 
 [dependencies]
-futures = "0.1"
-tokio-timer = "0.2"
+futures = "0.1.20"
+tokio-timer = "0.2.1"
 
 [dev-dependencies]
-tokio = "0.1"
+tokio = "0.1.5"
