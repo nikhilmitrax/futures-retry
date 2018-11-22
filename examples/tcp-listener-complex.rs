@@ -74,7 +74,7 @@ where
     }
 
     fn ok(&mut self) {
-        // Reset the attempts counter when the unrelying stream/future procudes an `Ok` result.
+        // Reset the attempts counter when the underlying stream/future procudes an `Ok` result.
         self.current_attempt = 0;
     }
 }
