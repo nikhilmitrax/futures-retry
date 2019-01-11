@@ -1,7 +1,7 @@
+use crate::{ErrorHandler, RetryPolicy};
 use futures::{Async, Future, Poll};
 use std::time::Instant;
 use tokio_timer;
-use {ErrorHandler, RetryPolicy};
 
 /// A factory trait used to create futures.
 ///

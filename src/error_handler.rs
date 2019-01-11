@@ -1,4 +1,4 @@
-use RetryPolicy;
+use crate::RetryPolicy;
 
 /// An error handler trait.
 ///
@@ -9,7 +9,6 @@ use RetryPolicy;
 /// Here's an example of an error handler that counts *consecutive* error attempts.
 ///
 /// ```
-/// extern crate futures_retry;
 /// use futures_retry::{ErrorHandler, RetryPolicy};
 /// use std::io;
 /// use std::time::Duration;
@@ -59,7 +58,7 @@ pub trait ErrorHandler<InError> {
     ///
     /// Refer to the [`RetryPolicy`](enum.RetryPolicy.html) type to understand what this method
     /// might return.
-    fn handle(&mut self, InError) -> RetryPolicy<Self::OutError>;
+    fn handle(&mut self, _: InError) -> RetryPolicy<Self::OutError>;
 
     /// This method is called on a successful execution (before returning an item) of the underlying
     /// future/stream.

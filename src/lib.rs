@@ -27,7 +27,6 @@
 //! Suggestions and critiques are welcome!
 //!
 //! ```rust
-//! extern crate futures_retry;
 //! // ...
 //! # extern crate tokio;
 //! # use tokio::prelude::*;
@@ -86,22 +85,17 @@
 
 #![deny(missing_docs)]
 
-extern crate futures;
-#[cfg(test)]
-extern crate tokio;
-extern crate tokio_timer;
-
 use std::time::Duration;
 
 mod error_handler;
 mod future;
 mod stream;
 
-pub use error_handler::ErrorHandler;
-pub use future::FutureFactory;
-pub use future::FutureRetry;
-pub use stream::StreamRetry;
-pub use stream::StreamRetryExt;
+pub use crate::{
+    error_handler::ErrorHandler,
+    future::{FutureFactory, FutureRetry},
+    stream::{StreamRetry, StreamRetryExt},
+};
 
 /// What to do when a future returns an error. Used in `FutureRetry::new` and `StreamRetry::new`.
 pub enum RetryPolicy<E> {

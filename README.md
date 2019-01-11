@@ -29,7 +29,6 @@ For examples have a look in the `examples/` folder in the git repo.
 Suggestions and critiques are welcome!
 
 ```rust
-extern crate futures_retry;
 // ...
 use futures_retry::{RetryPolicy, StreamRetryExt};
 

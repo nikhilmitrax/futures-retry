@@ -1,7 +1,7 @@
+use crate::{ErrorHandler, RetryPolicy};
 use futures::{Async, Future, Poll, Stream};
 use std::time::Instant;
 use tokio_timer;
-use {ErrorHandler, RetryPolicy};
 
 /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
 /// poll for future stream's items with a delay.
@@ -31,7 +31,6 @@ pub struct StreamRetry<F, S> {
 /// This magic trait allows you to handle errors on streams in a very neat manner:
 ///
 /// ```
-/// extern crate futures_retry;
 /// // ...
 /// # extern crate tokio;
 /// use futures_retry::{RetryPolicy, StreamRetryExt};
