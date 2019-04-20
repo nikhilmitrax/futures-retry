@@ -26,6 +26,7 @@ where
 {
     type FutureItem = F;
 
+    #[allow(clippy::new_ret_no_self)]
     fn new(&mut self) -> F {
         (*self)()
     }
