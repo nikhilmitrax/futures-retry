@@ -89,11 +89,13 @@ use std::time::Duration;
 
 mod error_handler;
 mod future;
+mod sink;
 mod stream;
 
 pub use crate::{
     error_handler::ErrorHandler,
     future::{FutureFactory, FutureRetry},
+    sink::{SinkRetry, SinkRetryExt},
     stream::{StreamRetry, StreamRetryExt},
 };
 
