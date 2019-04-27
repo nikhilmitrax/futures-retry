@@ -1,4 +1,5 @@
 use crate::RetryPolicy;
+use std::pin::Pin;
 
 /// An error handler trait.
 ///
@@ -58,7 +59,7 @@ pub trait ErrorHandler<InError> {
     ///
     /// Refer to the [`RetryPolicy`](enum.RetryPolicy.html) type to understand what this method
     /// might return.
-    fn handle(&mut self, _: InError) -> RetryPolicy<Self::OutError>;
+    fn handle(self: Pin<&mut Self>, _: InError) -> RetryPolicy<Self::OutError>;
 
     /// This method is called on a successful execution (before returning an item) of the underlying
     /// future/stream.
@@ -67,16 +68,16 @@ pub trait ErrorHandler<InError> {
     /// example.
     ///
     /// By default the method is a no-op.
-    fn ok(&mut self) {}
+    fn ok(self: Pin<&mut Self>) {}
 }
 
 impl<InError, F, OutError> ErrorHandler<InError> for F
 where
-    F: FnMut(InError) -> RetryPolicy<OutError>,
+    F: Unpin + FnMut(InError) -> RetryPolicy<OutError>,
 {
     type OutError = OutError;
 
-    fn handle(&mut self, e: InError) -> RetryPolicy<OutError> {
-        (self)(e)
+    fn handle(self: Pin<&mut Self>, e: InError) -> RetryPolicy<OutError> {
+        (self.get_mut())(e)
     }
 }

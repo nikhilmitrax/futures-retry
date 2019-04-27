@@ -11,7 +11,9 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-futures = "0.1.21"
+futures-preview = { version = "0.3.0-alpha.15", features = [ "compat" ] }
+# futures_01 = { package = "futures", version = "0.1" }
+pin-utils = "0.1.0-alpha.4"
 tokio-timer = "0.2.1"
 
 [dev-dependencies]
