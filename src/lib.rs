@@ -101,6 +101,7 @@ pub use crate::{
 };
 
 /// What to do when a future returns an error. Used in `FutureRetry::new` and `StreamRetry::new`.
+#[derive(Debug, Eq, PartialEq)]
 pub enum RetryPolicy<E> {
     /// Create and poll a new future immediately.
     ///
