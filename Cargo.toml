@@ -1,6 +1,6 @@
 [package]
 name = "futures-retry"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["mexus <gilaldpellaeon@gmail.com>", "Sylwek <sylwesterrapala@outlook.com>"]
 description = "Retry your Futures and Streams and Sinks!"
 license = "MIT/Apache-2.0"
