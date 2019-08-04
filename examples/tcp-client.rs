@@ -1,14 +1,10 @@
-use futures::{
-    compat::{Compat, Future01CompatExt},
-    future::ready,
-    TryFutureExt,
-};
+#![feature(async_await)]
+
 use futures_retry::{FutureRetry, RetryPolicy};
-use std::io::Write;
+use std::io;
 use std::time::Duration;
-use tokio::io;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tokio::prelude::AsyncRead;
 
 fn handle_connection_error(e: io::Error) -> RetryPolicy<io::Error> {
     // This is kinda unrealistical error handling, don't use it as it is!
@@ -24,23 +20,15 @@ fn handle_connection_error(e: io::Error) -> RetryPolicy<io::Error> {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     let addr = "127.0.0.1:12345".parse().unwrap();
     // Try to connect until we succeed or until an unrecoverable error is encountered.
-    let connection = FutureRetry::new(
-        move || TcpStream::connect(&addr).compat(),
-        handle_connection_error,
-    );
+    let socket =
+        FutureRetry::new(move || TcpStream::connect(&addr), handle_connection_error).await?;
     // .. and then try to write some data only once. If you want to retry on an error here as
-    // well, wrap up the whole `let connection = ...` & `let res = ...` in a `FutureRetry`.
-    let fut = connection.and_then(|tcp| {
-        let (_, mut writer) = tcp.split();
-        ready(writer.write_all(b"Yo!"))
-    });
-    let mut rt = tokio::runtime::Runtime::new().unwrap();
-    let res = rt.block_on(Compat::new(fut));
-    match res {
-        Ok(_) => println!("Done"),
-        Err(e) => println!("Write attempt failed: {}", e),
-    }
+    // well, wrap up the whole `let socket = ...` in a `FutureRetry`.
+    let (_, mut writer) = socket.split();
+    writer.write_all(b"Yo!").await?;
+    Ok(())
 }

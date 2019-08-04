@@ -30,6 +30,7 @@ For examples have a look in the `examples/` folder in the git repo.
 Suggestions and critiques are welcome!
 
 ```rust
+#![feature(async_await)]
 // ...
 use futures_retry::{RetryPolicy, StreamRetryExt};
 
@@ -44,25 +45,25 @@ fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
   }
 }
 
-fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
+async fn serve_connection(stream: TcpStream) {
   // ...
-  # future::ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
   # let addr = "127.0.0.1:12345".parse().unwrap();
   let listener =TcpListener::bind(&addr).unwrap();
   let server = listener.incoming()
     .retry(handle_error) // Magic happens here
     .and_then(|stream| {
       tokio::spawn(serve_connection(stream));
-      Ok(())
+      ok(())
     })
-    .for_each(|_| Ok(()))
+    .try_for_each(|_| ok(()))
     .map_err(|e| eprintln!("Caught an error {}", e));
   # // This nasty hack is required to exit immediately when running the doc tests.
-  # let server = future::ok(()).select(server).map(|_| ()).map_err(|_| ());
-  tokio::run(server);
+  # let server = select(ok::<_, ()>(()), server).map(|_| ());
+  server.await
 }
 ```
 

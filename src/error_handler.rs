@@ -11,7 +11,7 @@ use std::pin::Pin;
 ///
 /// ```
 /// use futures_retry::{ErrorHandler, RetryPolicy};
-/// use std::io;
+/// use std::{io, pin::Pin};
 /// use std::time::Duration;
 ///
 /// pub struct CustomHandler {
@@ -20,6 +20,8 @@ use std::pin::Pin;
 /// }
 ///
 /// impl CustomHandler {
+///     pin_utils::unsafe_pinned!(attempt: usize);
+///
 ///     pub fn new(attempts: usize) -> Self {
 ///         Self {
 ///             attempt: 0,
@@ -31,12 +33,12 @@ use std::pin::Pin;
 /// impl ErrorHandler<io::Error> for CustomHandler {
 ///     type OutError = io::Error;
 ///
-///     fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
+///     fn handle(mut self: Pin<&mut Self>, e: io::Error) -> RetryPolicy<io::Error> {
 ///         if self.attempt == self.max_attempts {
 ///             eprintln!("No attempts left");
 ///             return RetryPolicy::ForwardError(e);
 ///         }
-///         self.attempt += 1;
+///         *self.as_mut().attempt() += 1;
 ///         match e.kind() {
 ///             io::ErrorKind::ConnectionRefused => RetryPolicy::WaitRetry(Duration::from_secs(1)),
 ///             io::ErrorKind::TimedOut => RetryPolicy::Repeat,
@@ -44,8 +46,8 @@ use std::pin::Pin;
 ///         }
 ///     }
 ///
-///     fn ok(&mut self) {
-///         self.attempt = 0;
+///     fn ok(mut self: Pin<&mut Self>) {
+///         *self.as_mut().attempt() = 0;
 ///     }
 /// }
 /// #

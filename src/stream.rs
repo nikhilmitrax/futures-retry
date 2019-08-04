@@ -1,7 +1,7 @@
 use crate::{ErrorHandler, RetryPolicy};
-use futures::{compat::Compat01As03, ready, task::Context, Poll, TryFuture, TryStream};
+use futures::{ready, task::Context, Future, Poll, Stream, TryStream};
 use std::{pin::Pin, time::Instant};
-use tokio_timer;
+use tokio::timer;
 
 /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
 /// poll for future stream's items with a delay.
@@ -31,13 +31,13 @@ pub struct StreamRetry<F, S> {
 /// This magic trait allows you to handle errors on streams in a very neat manner:
 ///
 /// ```
+/// #![feature(async_await)]
 /// // ...
-/// # extern crate tokio;
 /// use futures_retry::{RetryPolicy, StreamRetryExt};
+/// # use futures::{TryStreamExt, TryFutureExt, future::{ok, select}, FutureExt};
 /// # use std::io;
 /// # use std::time::Duration;
 /// # use tokio::net::{TcpListener, TcpStream};
-/// # use tokio::prelude::*;
 ///
 /// fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
 ///   match e.kind() {
@@ -47,24 +47,25 @@ pub struct StreamRetry<F, S> {
 ///   }
 /// }
 ///
-/// fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
+/// async fn serve_connection(stream: TcpStream) {
 ///   // ...
-///   # future::result(Ok(()))
 /// }
 ///
-/// fn main() {
+/// #[tokio::main]
+/// async fn main() {
 ///   let listener: TcpListener = // ...
 ///   # TcpListener::bind(&"[::]:0".parse().unwrap()).unwrap();
 ///   let server = listener.incoming()
 ///     .retry(handle_error)
 ///     .and_then(|stream| {
 ///       tokio::spawn(serve_connection(stream));
-///       Ok(())
+///       ok(())
 ///     })
-///     .for_each(|_| Ok(()))
+///     .try_for_each(|_| ok(()))
 ///     .map_err(|e| eprintln!("Caught an error {}", e));
-///   # let server = server.select(Ok(())).map(|(_, _)| ()).map_err(|(_, _)| ());
-///   tokio::run(server);
+///   # // This nasty hack is required to exit immediately when running the doc tests.
+///   # let server = select(ok::<_, ()>(()), server).map(|_| ());
+///   server.await
 /// }
 /// ```
 pub trait StreamRetryExt: TryStream {
@@ -81,7 +82,7 @@ impl<S: ?Sized> StreamRetryExt for S where S: TryStream {}
 
 enum RetryState {
     WaitingForStream,
-    TimerActive(Compat01As03<tokio_timer::Delay>),
+    TimerActive(timer::Delay),
 }
 
 impl<F, S> StreamRetry<F, S> {
@@ -114,34 +115,20 @@ impl<F, S> StreamRetry<F, S> {
     }
 }
 
-impl<F, S> TryStream for StreamRetry<F, S>
+impl<F, S> Stream for StreamRetry<F, S>
 where
     S: TryStream,
     F: ErrorHandler<S::Error>,
 {
-    type Ok = S::Ok;
-    type Error = F::OutError;
+    type Item = Result<S::Ok, F::OutError>;
 
-    fn try_poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Option<Result<Self::Ok, Self::Error>>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         loop {
             let new_state = match self.as_mut().state().get_mut() {
                 RetryState::TimerActive(delay) => {
                     let delay = unsafe { Pin::new_unchecked(delay) };
-                    match ready!(delay.try_poll(cx)) {
-                        Ok(()) => RetryState::WaitingForStream,
-                        Err(e) => {
-                            // There could be two possible errors: timeout (TimerError::TooLong) or no
-                            // new timer could be created (TimerError::NoCapacity).
-                            // Since we are using the `sleep` method there could be no **timeout**
-                            // error emitted.
-                            // If the timer has reached its capacity.. well.. we are using just one
-                            // timer.. so it will make me panic for sure.
-                            panic!("Timer error: {}", e)
-                        }
-                    }
+                    ready!(delay.poll(cx));
+                    RetryState::WaitingForStream
                 }
                 RetryState::WaitingForStream => {
                     match ready!(self.as_mut().stream().try_poll_next(cx)) {
@@ -155,11 +142,9 @@ where
                         Some(Err(e)) => match self.as_mut().error_action().handle(e) {
                             RetryPolicy::ForwardError(e) => return Poll::Ready(Some(Err(e))),
                             RetryPolicy::Repeat => RetryState::WaitingForStream,
-                            RetryPolicy::WaitRetry(duration) => {
-                                RetryState::TimerActive(Compat01As03::new(tokio_timer::Delay::new(
-                                    Instant::now() + duration,
-                                )))
-                            }
+                            RetryPolicy::WaitRetry(duration) => RetryState::TimerActive(
+                                timer::Delay::new(Instant::now() + duration),
+                            ),
                         },
                     }
                 }
@@ -172,9 +157,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use futures::{
-        compat::Compat, executor::block_on_stream, stream::iter, TryFutureExt, TryStreamExt,
-    };
+    use futures::{executor::block_on_stream, stream::iter, TryFutureExt, TryStreamExt};
     use std::time::Duration;
 
     #[test]
@@ -205,8 +188,8 @@ mod test {
         })
         .try_collect()
         .into_future();
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-        assert_eq!(Ok(vec!(19)), rt.block_on(Compat::new(retry)));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        assert_eq!(Ok(vec!(19)), rt.block_on(retry));
     }
 
     #[test]

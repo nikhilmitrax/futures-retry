@@ -1,7 +1,7 @@
 use crate::{ErrorHandler, RetryPolicy};
-use futures::{compat::Compat01As03, ready, task::Context, Future, Poll, TryFuture};
+use futures::{ready, task::Context, Future, Poll, TryFuture};
 use std::{marker::Unpin, pin::Pin, time::Instant};
-use tokio_timer;
+use tokio::timer;
 
 /// A factory trait used to create futures.
 ///
@@ -51,7 +51,7 @@ where
 enum RetryState<F> {
     NotStarted,
     WaitingForFuture(F),
-    TimerActive(Compat01As03<tokio_timer::Delay>),
+    TimerActive(timer::Delay),
 }
 
 impl<F: FutureFactory, R> FutureRetry<F, R> {
@@ -80,14 +80,13 @@ impl<F: FutureFactory, R> FutureRetry<F, R> {
     }
 }
 
-impl<F: FutureFactory, R> TryFuture for FutureRetry<F, R>
+impl<F: FutureFactory, R> Future for FutureRetry<F, R>
 where
     R: ErrorHandler<<F::FutureItem as TryFuture>::Error>,
 {
-    type Ok = <<F as FutureFactory>::FutureItem as TryFuture>::Ok;
-    type Error = R::OutError;
+    type Output = Result<<<F as FutureFactory>::FutureItem as TryFuture>::Ok, R::OutError>;
 
-    fn try_poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<Self::Ok, Self::Error>> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             let new_state = match unsafe { self.as_mut().state().get_unchecked_mut() } {
                 RetryState::NotStarted => {
@@ -95,18 +94,8 @@ where
                 }
                 RetryState::TimerActive(delay) => {
                     let delay = unsafe { Pin::new_unchecked(delay) };
-                    match ready!(delay.try_poll(cx)) {
-                        Ok(()) => RetryState::WaitingForFuture(self.as_mut().factory().new()),
-                        Err(e) => {
-                            // There could be two possible errors: timeout (TimerError::TooLong) or no
-                            // new timer could be created (TimerError::NoCapacity).
-                            // Since we are using the `sleep` method there could be no **timeout**
-                            // error emitted.
-                            // If the timer has reached its capacity.. well.. we are using just one
-                            // timer.. so it will make me panic for sure.
-                            panic!("Timer error: {}", e)
-                        }
-                    }
+                    ready!(delay.poll(cx));
+                    RetryState::WaitingForFuture(self.as_mut().factory().new())
                 }
                 RetryState::WaitingForFuture(future) => {
                     let future = unsafe { Pin::new_unchecked(future) };
@@ -120,11 +109,9 @@ where
                             RetryPolicy::Repeat => {
                                 RetryState::WaitingForFuture(self.as_mut().factory().new())
                             }
-                            RetryPolicy::WaitRetry(duration) => {
-                                RetryState::TimerActive(Compat01As03::new(tokio_timer::Delay::new(
-                                    Instant::now() + duration,
-                                )))
-                            }
+                            RetryPolicy::WaitRetry(duration) => RetryState::TimerActive(
+                                timer::Delay::new(Instant::now() + duration),
+                            ),
                         },
                     }
                 }
@@ -139,7 +126,6 @@ mod tests {
     use super::*;
     use futures::executor::block_on;
     use futures::{
-        compat::Compat,
         future::{err, ok},
         TryFutureExt,
     };
@@ -181,8 +167,8 @@ mod tests {
             RetryPolicy::WaitRetry::<u8>(Duration::from_millis(10))
         })
         .into_future();
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-        assert_eq!(Ok(3), rt.block_on(Compat::new(f)));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        assert_eq!(Ok(3), rt.block_on(f));
     }
 
     #[test]
