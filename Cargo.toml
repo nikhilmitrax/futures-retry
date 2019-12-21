@@ -11,9 +11,9 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-futures-preview = { version = "0.3.0-alpha.17" }
-pin-utils = "0.1.0-alpha.4"
-tokio = { git = "https://github.com/tokio-rs/tokio/", features = [ "timer" ], default-features = false }
+futures = { version = "0.3.1" }
+pin-project = "0.4.6"
+tokio = { version = "0.2", features = [ "time" ], default-features = false }
 
 [dev-dependencies]
-tokio = { git = "https://github.com/tokio-rs/tokio/", default-features = false, features = ["rt-full", "tcp"] }
+tokio = { version = "0.2", features = ["full"] }

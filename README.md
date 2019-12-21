@@ -29,7 +29,6 @@ For examples have a look in the `examples/` folder in the git repo.
 Suggestions and critiques are welcome!
 
 ```rust
-#![feature(async_await)]
 // ...
 use futures_retry::{RetryPolicy, StreamRetryExt};
 
@@ -50,8 +49,9 @@ async fn serve_connection(stream: TcpStream) {
 
 #[tokio::main]
 async fn main() {
-  # let addr = "127.0.0.1:12345".parse().unwrap();
-  let listener =TcpListener::bind(&addr).unwrap();
+  let addr = //...
+  # "127.0.0.1:12345";
+  let mut listener = TcpListener::bind(addr).await.unwrap();
   let server = listener.incoming()
     .retry(handle_error) // Magic happens here
     .and_then(|stream| {

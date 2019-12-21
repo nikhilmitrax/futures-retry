@@ -1,7 +1,13 @@
 use crate::{ErrorHandler, RetryPolicy};
-use futures::{ready, task::Context, Future, Poll, TryFuture};
-use std::{marker::Unpin, pin::Pin, time::Instant};
-use tokio::timer;
+use futures::{ready, TryFuture};
+use pin_project::{pin_project, project};
+use std::{
+    future::Future,
+    marker::Unpin,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use tokio::time;
 
 /// A factory trait used to create futures.
 ///
@@ -16,7 +22,7 @@ pub trait FutureFactory {
 
     /// Creates a new future. We don't need the factory to be immutable so we pass `self` as a
     /// mutable reference.
-    fn new(self: Pin<&mut Self>) -> Self::FutureItem;
+    fn new(&mut self) -> Self::FutureItem;
 }
 
 impl<T, F> FutureFactory for T
@@ -27,8 +33,8 @@ where
     type FutureItem = F;
 
     #[allow(clippy::new_ret_no_self)]
-    fn new(self: Pin<&mut Self>) -> F {
-        (*self.get_mut())()
+    fn new(&mut self) -> F {
+        (self)()
     }
 }
 
@@ -39,26 +45,25 @@ where
 /// connections, RPC calls.
 ///
 /// There is also a type to handle `Stream` errors: [`StreamRetry`](struct.StreamRetry.html).
+#[pin_project]
 pub struct FutureRetry<F, R>
 where
     F: FutureFactory,
 {
     factory: F,
     error_action: R,
+    #[pin]
     state: RetryState<F::FutureItem>,
 }
 
+#[pin_project]
 enum RetryState<F> {
     NotStarted,
-    WaitingForFuture(F),
-    TimerActive(timer::Delay),
+    WaitingForFuture(#[pin] F),
+    TimerActive(#[pin] time::Delay),
 }
 
 impl<F: FutureFactory, R> FutureRetry<F, R> {
-    pin_utils::unsafe_pinned!(factory: F);
-    pin_utils::unsafe_pinned!(error_action: R);
-    pin_utils::unsafe_pinned!(state: RetryState<F::FutureItem>);
-
     /// Creates a `FutureRetry` using a provided factory and an object of `ErrorHandler` type that
     /// decides on a retry-policy depending on an encountered error.
     ///
@@ -86,37 +91,33 @@ where
 {
     type Output = Result<<<F as FutureFactory>::FutureItem as TryFuture>::Ok, R::OutError>;
 
+    #[project]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            let new_state = match unsafe { self.as_mut().state().get_unchecked_mut() } {
-                RetryState::NotStarted => {
-                    RetryState::WaitingForFuture(self.as_mut().factory().new())
-                }
+            let this = self.as_mut().project();
+            #[project]
+            let new_state = match this.state.project() {
+                RetryState::NotStarted => RetryState::WaitingForFuture(this.factory.new()),
                 RetryState::TimerActive(delay) => {
-                    let delay = unsafe { Pin::new_unchecked(delay) };
                     ready!(delay.poll(cx));
-                    RetryState::WaitingForFuture(self.as_mut().factory().new())
+                    RetryState::WaitingForFuture(this.factory.new())
                 }
-                RetryState::WaitingForFuture(future) => {
-                    let future = unsafe { Pin::new_unchecked(future) };
-                    match ready!(future.try_poll(cx)) {
-                        Ok(x) => {
-                            self.as_mut().error_action().ok();
-                            return Poll::Ready(Ok(x));
-                        }
-                        Err(e) => match self.as_mut().error_action().handle(e) {
-                            RetryPolicy::ForwardError(e) => return Poll::Ready(Err(e)),
-                            RetryPolicy::Repeat => {
-                                RetryState::WaitingForFuture(self.as_mut().factory().new())
-                            }
-                            RetryPolicy::WaitRetry(duration) => RetryState::TimerActive(
-                                timer::Delay::new(Instant::now() + duration),
-                            ),
-                        },
+                RetryState::WaitingForFuture(future) => match ready!(future.try_poll(cx)) {
+                    Ok(x) => {
+                        this.error_action.ok();
+                        return Poll::Ready(Ok(x));
                     }
-                }
+                    Err(e) => match this.error_action.handle(e) {
+                        RetryPolicy::ForwardError(e) => return Poll::Ready(Err(e)),
+                        RetryPolicy::Repeat => RetryState::WaitingForFuture(this.factory.new()),
+                        RetryPolicy::WaitRetry(duration) => {
+                            RetryState::TimerActive(time::delay_for(duration))
+                        }
+                    },
+                },
             };
-            self.as_mut().state().set(new_state);
+
+            self.as_mut().project().state.set(new_state);
         }
     }
 }
@@ -144,7 +145,7 @@ mod tests {
         /// # Warning
         ///
         /// Will panic if there is no *next* future.
-        fn new(mut self: Pin<&mut Self>) -> Self::FutureItem {
+        fn new(&mut self) -> Self::FutureItem {
             self.0.next().expect("No more futures!")
         }
     }
@@ -161,14 +162,13 @@ mod tests {
         assert_eq!(Err(1u8), block_on(f.into_future()));
     }
 
-    #[test]
-    fn more_complicated_wait() {
+    #[tokio::test]
+    async fn more_complicated_wait() {
         let f = FutureRetry::new(FutureIterator(vec![err(2u8), ok(3u8)].into_iter()), |_| {
             RetryPolicy::WaitRetry::<u8>(Duration::from_millis(10))
         })
         .into_future();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        assert_eq!(Ok(3), rt.block_on(f));
+        assert_eq!(Ok(3), f.await);
     }
 
     #[test]

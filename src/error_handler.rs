@@ -1,5 +1,4 @@
 use crate::RetryPolicy;
-use std::pin::Pin;
 
 /// An error handler trait.
 ///
@@ -11,7 +10,7 @@ use std::pin::Pin;
 ///
 /// ```
 /// use futures_retry::{ErrorHandler, RetryPolicy};
-/// use std::{io, pin::Pin};
+/// use std::io;
 /// use std::time::Duration;
 ///
 /// pub struct CustomHandler {
@@ -20,7 +19,6 @@ use std::pin::Pin;
 /// }
 ///
 /// impl CustomHandler {
-///     pin_utils::unsafe_pinned!(attempt: usize);
 ///
 ///     pub fn new(attempts: usize) -> Self {
 ///         Self {
@@ -33,12 +31,12 @@ use std::pin::Pin;
 /// impl ErrorHandler<io::Error> for CustomHandler {
 ///     type OutError = io::Error;
 ///
-///     fn handle(mut self: Pin<&mut Self>, e: io::Error) -> RetryPolicy<io::Error> {
+///     fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
 ///         if self.attempt == self.max_attempts {
 ///             eprintln!("No attempts left");
 ///             return RetryPolicy::ForwardError(e);
 ///         }
-///         *self.as_mut().attempt() += 1;
+///         self.attempt += 1;
 ///         match e.kind() {
 ///             io::ErrorKind::ConnectionRefused => RetryPolicy::WaitRetry(Duration::from_secs(1)),
 ///             io::ErrorKind::TimedOut => RetryPolicy::Repeat,
@@ -46,12 +44,10 @@ use std::pin::Pin;
 ///         }
 ///     }
 ///
-///     fn ok(mut self: Pin<&mut Self>) {
-///         *self.as_mut().attempt() = 0;
+///     fn ok(&mut self) {
+///         self.attempt = 0;
 ///     }
 /// }
-/// #
-/// # fn main() {}
 /// ```
 pub trait ErrorHandler<InError> {
     /// An error that the `handle` function will produce.
@@ -61,7 +57,7 @@ pub trait ErrorHandler<InError> {
     ///
     /// Refer to the [`RetryPolicy`](enum.RetryPolicy.html) type to understand what this method
     /// might return.
-    fn handle(self: Pin<&mut Self>, _: InError) -> RetryPolicy<Self::OutError>;
+    fn handle(&mut self, _: InError) -> RetryPolicy<Self::OutError>;
 
     /// This method is called on a successful execution (before returning an item) of the underlying
     /// future/stream.
@@ -70,7 +66,7 @@ pub trait ErrorHandler<InError> {
     /// example.
     ///
     /// By default the method is a no-op.
-    fn ok(self: Pin<&mut Self>) {}
+    fn ok(&mut self) {}
 }
 
 impl<InError, F, OutError> ErrorHandler<InError> for F
@@ -79,7 +75,7 @@ where
 {
     type OutError = OutError;
 
-    fn handle(self: Pin<&mut Self>, e: InError) -> RetryPolicy<OutError> {
-        (self.get_mut())(e)
+    fn handle(&mut self, e: InError) -> RetryPolicy<OutError> {
+        (self)(e)
     }
 }

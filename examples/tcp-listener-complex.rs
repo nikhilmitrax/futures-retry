@@ -1,9 +1,7 @@
-#![feature(async_await)]
-
 use futures::TryStreamExt;
 use futures_retry::{ErrorHandler, RetryPolicy, StreamRetryExt};
-use std::{pin::Pin, time::Duration};
-use tokio::io::{self, AsyncReadExt};
+use std::time::Duration;
+use tokio::io::{self};
 use tokio::net::{TcpListener, TcpStream};
 
 /// An I/O errors handler that counts consecutive error attempts.
@@ -14,8 +12,6 @@ struct IoHandler<D> {
 }
 
 impl<D> IoHandler<D> {
-    pin_utils::unsafe_pinned!(current_attempt: usize);
-
     fn new(max_attempts: usize, display_name: D) -> Self {
         IoHandler {
             max_attempts,
@@ -49,8 +45,8 @@ where
 {
     type OutError = io::Error;
 
-    fn handle(mut self: Pin<&mut Self>, e: io::Error) -> RetryPolicy<io::Error> {
-        *self.as_mut().current_attempt() += 1;
+    fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
+        self.current_attempt += 1;
         if self.current_attempt > self.max_attempts {
             eprintln!(
                 "[{}] All attempts ({}) have been used up",
@@ -74,17 +70,17 @@ where
         }
     }
 
-    fn ok(mut self: Pin<&mut Self>) {
+    fn ok(&mut self) {
         // Reset the attempts counter when the underlying stream/future procudes an `Ok` result.
-        *self.as_mut().current_attempt() = 0;
+        self.current_attempt = 0;
     }
 }
 
-async fn process_connection(socket: TcpStream) -> io::Result<()> {
-    let (mut reader, mut writer) = socket.split();
+async fn process_connection(mut socket: TcpStream) -> io::Result<()> {
     // Copy the data back to the client
     let conn = move || async move {
-        match reader.copy(&mut writer).await {
+        let (mut reader, mut writer) = socket.split();
+        match io::copy(&mut reader, &mut writer).await {
             Ok(n) => println!("Wrote {} bytes", n),
             Err(err) => println!("Can't copy data: IO error {:?}", err),
         }
@@ -97,8 +93,8 @@ async fn process_connection(socket: TcpStream) -> io::Result<()> {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let addr = "127.0.0.1:12345".parse().unwrap();
-    let tcp = TcpListener::bind(&addr).unwrap();
+    let addr = "127.0.0.1:12345";
+    let mut tcp = TcpListener::bind(addr).await.unwrap();
 
     tcp.incoming()
         .retry(IoHandler::new(3, "Accepting connections"))

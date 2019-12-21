@@ -1,8 +1,5 @@
-#![feature(async_await)]
-
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::time::Duration;
 use tokio::io;
 use tokio::net::TcpStream;
@@ -25,18 +22,14 @@ impl<D> IoHandler<D> {
     }
 }
 
-impl<D> IoHandler<D> {
-    pin_utils::unsafe_pinned!(current_attempt: usize);
-}
-
 impl<D> ErrorHandler<io::Error> for IoHandler<D>
 where
     D: ::std::fmt::Display,
 {
     type OutError = io::Error;
 
-    fn handle(mut self: Pin<&mut Self>, e: io::Error) -> RetryPolicy<io::Error> {
-        *self.as_mut().current_attempt() += 1;
+    fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
+        self.current_attempt += 1;
         if self.current_attempt > self.max_attempts {
             eprintln!(
                 "[{}] All attempts ({}) have been used",
@@ -67,11 +60,11 @@ async fn connect_and_send(addr: SocketAddr) -> io::Result<()> {
     let connection = FutureRetry::new(
         move || {
             println!("Trying to connect to {}", addr);
-            TcpStream::connect(&addr)
+            TcpStream::connect(addr)
         },
         IoHandler::new(3, "Establishing a connection"),
     );
-    let socket = connection.await?;
+    let mut socket = connection.await?;
     let (_, mut writer) = socket.split();
     writer.write_all(b"Yo!").await
 }

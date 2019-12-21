@@ -1,16 +1,14 @@
-#![feature(async_await)]
-
 use futures::TryStreamExt;
 use futures_retry::{RetryPolicy, StreamRetryExt};
 use std::time::Duration;
-use tokio::io::{self, AsyncReadExt};
+use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
 
-async fn process_connection(socket: TcpStream) -> io::Result<()> {
-    let (mut reader, mut writer) = socket.split();
+async fn process_connection(mut socket: TcpStream) -> io::Result<()> {
     // Copy the data back to the client
     let conn = move || async move {
-        match reader.copy(&mut writer).await {
+        let (mut reader, mut writer) = socket.split();
+        match io::copy(&mut reader, &mut writer).await {
             Ok(n) => println!("Wrote {} bytes", n),
             Err(err) => println!("Can't copy data: IO error {:?}", err),
         }
@@ -23,8 +21,8 @@ async fn process_connection(socket: TcpStream) -> io::Result<()> {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let addr = "127.0.0.1:12345".parse().unwrap();
-    let server = TcpListener::bind(&addr).unwrap();
+    let addr = "127.0.0.1:12345";
+    let mut server = TcpListener::bind(addr).await.unwrap();
     println!("Listening at {}", server.local_addr().unwrap());
 
     server
