@@ -1,8 +1,8 @@
 [package]
 name = "futures-retry"
 version = "0.3.3"
-authors = ["mexus <gilaldpellaeon@gmail.com>", "Sylwek <sylwesterrapala@outlook.com>"]
-description = "Retry your Futures and Streams and Sinks!"
+authors = ["mexus <gilaldpellaeon@gmail.com>"]
+description = "Retry your Futures and Streams!"
 license = "MIT/Apache-2.0"
 keywords = ["tokio", "futures", "retry"]
 repository = "https://gitlab.com/mexus/futures-retry"

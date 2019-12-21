@@ -6,8 +6,7 @@
 //!
 //! [[Master docs]](https://mexus.gitlab.io/futures-retry/futures_retry/)
 //!
-//! A tool that helps you retry your future :) Well, `Future`s and `Stream`s and `Sink`s, to be
-//! precise.
+//! A tool that helps you retry your future :) Well, `Future`s and `Stream`s, to be precise.
 //!
 //! It's quite a common task when you need to repeat some action if you've got an error, be it a
 //! connection timeout or some temporary OS error.
@@ -91,13 +90,11 @@ use std::time::Duration;
 
 mod error_handler;
 mod future;
-// mod sink;
 mod stream;
 
 pub use crate::{
     error_handler::ErrorHandler,
     future::{FutureFactory, FutureRetry},
-    // sink::{SinkRetry, SinkRetryExt},
     stream::{StreamRetry, StreamRetryExt},
 };
 
