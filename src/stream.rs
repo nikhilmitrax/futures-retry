@@ -1,7 +1,12 @@
 use crate::{ErrorHandler, RetryPolicy};
-use futures::{Async, Future, Poll, Stream};
-use std::time::Instant;
-use tokio_timer;
+use futures::{ready, Stream, TryStream};
+use pin_project::{pin_project, project};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use tokio::time;
 
 /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
 /// poll for future stream's items with a delay.
@@ -18,9 +23,12 @@ use tokio_timer;
 ///
 /// Also have a look at [`StreamRetryExt`](trait.StreamRetryExt.html) trait for a more convenient
 /// usage.
+#[pin_project]
 pub struct StreamRetry<F, S> {
     error_action: F,
+    #[pin]
     stream: S,
+    #[pin]
     state: RetryState,
 }
 
@@ -32,12 +40,11 @@ pub struct StreamRetry<F, S> {
 ///
 /// ```
 /// // ...
-/// # extern crate tokio;
 /// use futures_retry::{RetryPolicy, StreamRetryExt};
+/// # use futures::{TryStreamExt, TryFutureExt, future::{ok, select}, FutureExt};
 /// # use std::io;
 /// # use std::time::Duration;
 /// # use tokio::net::{TcpListener, TcpStream};
-/// # use tokio::prelude::*;
 ///
 /// fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
 ///   match e.kind() {
@@ -47,27 +54,28 @@ pub struct StreamRetry<F, S> {
 ///   }
 /// }
 ///
-/// fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
+/// async fn serve_connection(stream: TcpStream) {
 ///   // ...
-///   # future::result(Ok(()))
 /// }
 ///
-/// fn main() {
-///   let listener: TcpListener = // ...
-///   # TcpListener::bind(&"[::]:0".parse().unwrap()).unwrap();
+/// #[tokio::main]
+/// async fn main() {
+///   let mut listener: TcpListener = // ...
+///   # TcpListener::bind("[::]:0").await.unwrap();
 ///   let server = listener.incoming()
 ///     .retry(handle_error)
 ///     .and_then(|stream| {
 ///       tokio::spawn(serve_connection(stream));
-///       Ok(())
+///       ok(())
 ///     })
-///     .for_each(|_| Ok(()))
+///     .try_for_each(|_| ok(()))
 ///     .map_err(|e| eprintln!("Caught an error {}", e));
-///   # let server = server.select(Ok(())).map(|(_, _)| ()).map_err(|(_, _)| ());
-///   tokio::run(server);
+///   # // This nasty hack is required to exit immediately when running the doc tests.
+///   # let server = select(ok::<_, ()>(()), server).map(|_| ());
+///   server.await
 /// }
 /// ```
-pub trait StreamRetryExt: Stream {
+pub trait StreamRetryExt: TryStream {
     /// Converts the stream into a **retry stream**. See `StreamRetry::new` for details.
     fn retry<F>(self, error_action: F) -> StreamRetry<F, Self>
     where
@@ -77,11 +85,12 @@ pub trait StreamRetryExt: Stream {
     }
 }
 
-impl<S: ?Sized> StreamRetryExt for S where S: Stream {}
+impl<S: ?Sized> StreamRetryExt for S where S: TryStream {}
 
+#[pin_project]
 enum RetryState {
     WaitingForStream,
-    TimerActive(tokio_timer::Delay),
+    TimerActive(#[pin] time::Delay),
 }
 
 impl<F, S> StreamRetry<F, S> {
@@ -100,7 +109,7 @@ impl<F, S> StreamRetry<F, S> {
     ///                   exapmle).
     pub fn new(stream: S, error_action: F) -> Self
     where
-        S: Stream,
+        S: TryStream,
     {
         Self {
             error_action,
@@ -112,43 +121,39 @@ impl<F, S> StreamRetry<F, S> {
 
 impl<F, S> Stream for StreamRetry<F, S>
 where
-    S: Stream,
+    S: TryStream,
     F: ErrorHandler<S::Error>,
 {
-    type Item = S::Item;
-    type Error = F::OutError;
+    type Item = Result<S::Ok, F::OutError>;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+    #[project]
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         loop {
-            let new_state = match self.state {
-                RetryState::TimerActive(ref mut delay) => match delay.poll() {
-                    Ok(Async::Ready(())) => RetryState::WaitingForStream,
-                    Ok(Async::NotReady) => return Ok(Async::NotReady),
-                    Err(e) => {
-                        // There could be two possible errors: timeout (TimerError::TooLong) or no
-                        // new timer could be created (TimerError::NoCapacity).
-                        // Since we are using the `sleep` method there could be no **timeout**
-                        // error emitted.
-                        // If the timer has reached its capacity.. well.. we are using just one
-                        // timer.. so it will make me panic for sure.
-                        panic!("Timer error: {}", e)
+            let this = self.as_mut().project();
+            #[project]
+            let new_state = match this.state.project() {
+                RetryState::TimerActive(delay) => {
+                    ready!(delay.poll(cx));
+                    RetryState::WaitingForStream
+                }
+                RetryState::WaitingForStream => match ready!(this.stream.try_poll_next(cx)) {
+                    Some(Ok(x)) => {
+                        this.error_action.ok();
+                        return Poll::Ready(Some(Ok(x)));
                     }
-                },
-                RetryState::WaitingForStream => match self.stream.poll() {
-                    Ok(x) => {
-                        self.error_action.ok();
-                        return Ok(x);
+                    None => {
+                        return Poll::Ready(None);
                     }
-                    Err(e) => match self.error_action.handle(e) {
-                        RetryPolicy::ForwardError(e) => return Err(e),
+                    Some(Err(e)) => match this.error_action.handle(e) {
+                        RetryPolicy::ForwardError(e) => return Poll::Ready(Some(Err(e))),
                         RetryPolicy::Repeat => RetryState::WaitingForStream,
-                        RetryPolicy::WaitRetry(duration) => RetryState::TimerActive(
-                            tokio_timer::Delay::new(Instant::now() + duration),
-                        ),
+                        RetryPolicy::WaitRetry(duration) => {
+                            RetryState::TimerActive(time::delay_for(duration))
+                        }
                     },
                 },
             };
-            self.state = new_state;
+            self.as_mut().project().state.set(new_state);
         }
     }
 }
@@ -156,48 +161,44 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use futures::stream::iter_result;
+    use futures::{executor::block_on_stream, stream::iter, TryFutureExt, TryStreamExt};
     use std::time::Duration;
-    use tokio;
 
     #[test]
     fn naive() {
-        let stream = iter_result(vec![Ok::<_, u8>(17), Ok(19)]);
+        let stream = iter(vec![Ok::<_, u8>(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat::<()>);
-        assert_eq!(Ok(vec![17, 19]), retry.collect().wait());
+        assert_eq!(
+            Ok(vec![17, 19]),
+            block_on_stream(retry.into_stream()).collect()
+        );
     }
 
     #[test]
     fn repeat() {
-        let stream = iter_result(vec![Ok(1), Err(17), Ok(19)]);
+        let stream = iter(vec![Ok(1), Err(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat::<()>);
-        assert_eq!(Ok(vec![1, 19]), retry.collect().wait());
+        assert_eq!(
+            Ok(vec![1, 19]),
+            block_on_stream(retry.into_stream()).collect()
+        );
     }
 
-    #[test]
-    fn wait() {
-        let stream = iter_result(vec![Err(17), Ok(19)]);
+    #[tokio::test]
+    async fn wait() {
+        let stream = iter(vec![Err(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| {
             RetryPolicy::WaitRetry::<()>(Duration::from_millis(10))
         })
-        .collect()
-        .then(|x| {
-            assert_eq!(Ok(vec![19]), x);
-            Ok(())
-        });
-        tokio::run(retry);
+        .try_collect()
+        .into_future();
+        assert_eq!(Ok(vec!(19)), retry.await);
     }
 
     #[test]
     fn propagate() {
-        let stream = iter_result(vec![Err(17u8), Ok(19u16)]);
-        let mut retry = StreamRetry::new(stream, RetryPolicy::ForwardError);
-        assert_eq!(Err(17u8), retry.poll());
-    }
-
-    #[test]
-    fn propagate_ext() {
-        let mut stream = iter_result(vec![Err(17u8), Ok(19u16)]).retry(RetryPolicy::ForwardError);
-        assert_eq!(Err(17u8), stream.poll());
+        let stream = iter(vec![Err(17u8), Ok(19u16)]);
+        let retry = StreamRetry::new(stream, RetryPolicy::ForwardError);
+        assert_eq!(Some(Err(17u8)), block_on_stream(retry.into_stream()).next());
     }
 }

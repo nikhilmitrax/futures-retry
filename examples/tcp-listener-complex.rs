@@ -1,11 +1,8 @@
-extern crate futures_retry;
-extern crate tokio;
-
+use futures::TryStreamExt;
 use futures_retry::{ErrorHandler, RetryPolicy, StreamRetryExt};
 use std::time::Duration;
-use tokio::io;
-use tokio::net::TcpListener;
-use tokio::prelude::*;
+use tokio::io::{self};
+use tokio::net::{TcpListener, TcpStream};
 
 /// An I/O errors handler that counts consecutive error attempts.
 struct IoHandler<D> {
@@ -79,28 +76,28 @@ where
     }
 }
 
-fn main() {
-    let addr = "127.0.0.1:12345".parse().unwrap();
-    let tcp = TcpListener::bind(&addr).unwrap();
+async fn process_connection(mut socket: TcpStream) -> io::Result<()> {
+    // Copy the data back to the client
+    let conn = move || async move {
+        let (mut reader, mut writer) = socket.split();
+        match io::copy(&mut reader, &mut writer).await {
+            Ok(n) => println!("Wrote {} bytes", n),
+            Err(err) => println!("Can't copy data: IO error {:?}", err),
+        }
+    };
 
-    let server = tcp
-        .incoming()
+    // Spawn the future as a concurrent task
+    tokio::spawn(conn());
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    let addr = "127.0.0.1:12345";
+    let mut tcp = TcpListener::bind(addr).await.unwrap();
+
+    tcp.incoming()
         .retry(IoHandler::new(3, "Accepting connections"))
-        .for_each(|tcp| {
-            let (reader, writer) = tcp.split();
-            // Copy the data back to the client
-            let conn = io::copy(reader, writer)
-                // print what happened
-                .map(|(n, _, _)| println!("Wrote {} bytes", n))
-                // Handle any errors
-                .map_err(|err| println!("Can't copy data: IO error {:?}", err));
-
-            // Spawn the future as a concurrent task
-            tokio::spawn(conn);
-            Ok(())
-        })
-        .map_err(|err| {
-            println!("server error {:?}", err);
-        });
-    tokio::run(server);
+        .try_for_each(process_connection)
+        .await
 }

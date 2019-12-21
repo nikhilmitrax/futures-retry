@@ -1,6 +1,3 @@
-extern crate futures_retry;
-extern crate tokio;
-
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -58,36 +55,38 @@ where
 
 /// In this function we try to establish a connection to a given address for 3 times, and then try
 /// to send some data exactly once.
-fn connect_and_send(addr: SocketAddr) -> impl Future<Item = (), Error = io::Error> {
+async fn connect_and_send(addr: SocketAddr) -> io::Result<()> {
     // Try to connect until we succeed or until an unrecoverable error is encountered.
     let connection = FutureRetry::new(
         move || {
             println!("Trying to connect to {}", addr);
-            TcpStream::connect(&addr)
+            TcpStream::connect(addr)
         },
         IoHandler::new(3, "Establishing a connection"),
     );
-    connection.and_then(|tcp| {
-        let (_, mut writer) = tcp.split();
-        writer.write_all(b"Yo!")
-    })
+    let mut socket = connection.await?;
+    let (_, mut writer) = socket.split();
+    writer.write_all(b"Yo!").await
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     let addr = "127.0.0.1:12345".parse().unwrap();
     // Try to connect and send data 2 times.
-    let action = FutureRetry::new(
+    FutureRetry::new(
         move || {
             println!("Trying to execute a client");
             connect_and_send(addr)
         },
         IoHandler::new(2, "Running a client"),
     )
-    .map_err(|e| eprintln!("Connect and send has failed: {}", e))
-    .map(|_| println!("Done"));
+    .await?;
+    println!("Done");
+    // .map_err(|e| eprintln!("Connect and send has failed: {}", e))
+    // .map(|_| println!("Done"));
     // To check out that attempts logic works as expected, launch a listener within 30-seconds time
     // period after launching the example, e.g. on linux:
     //
     // % nc -l 127.0.0.1 12345
-    tokio::run(action);
+    Ok(())
 }

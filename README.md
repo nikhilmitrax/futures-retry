@@ -8,8 +8,7 @@
 
 [[Master docs]](https://mexus.gitlab.io/futures-retry/futures_retry/)
 
-A tool that helps you retry your future :) Well, `Future`s and `Stream`s and `Sink`s, to be
-precise.
+A tool that helps you retry your future :) Well, `Future`s and `Stream`s, to be precise.
 
 It's quite a common task when you need to repeat some action if you've got an error, be it a
 connection timeout or some temporary OS error.
@@ -44,25 +43,26 @@ fn handle_error(e: io::Error) -> RetryPolicy<io::Error> {
   }
 }
 
-fn serve_connection(stream: TcpStream) -> impl Future<Item = (), Error = ()> + Send {
+async fn serve_connection(stream: TcpStream) {
   // ...
-  # future::ok(())
 }
 
-fn main() {
-  # let addr = "127.0.0.1:12345".parse().unwrap();
-  let listener =TcpListener::bind(&addr).unwrap();
+#[tokio::main]
+async fn main() {
+  let addr = //...
+  # "127.0.0.1:12345";
+  let mut listener = TcpListener::bind(addr).await.unwrap();
   let server = listener.incoming()
     .retry(handle_error) // Magic happens here
     .and_then(|stream| {
       tokio::spawn(serve_connection(stream));
-      Ok(())
+      ok(())
     })
-    .for_each(|_| Ok(()))
+    .try_for_each(|_| ok(()))
     .map_err(|e| eprintln!("Caught an error {}", e));
   # // This nasty hack is required to exit immediately when running the doc tests.
-  # let server = future::ok(()).select(server).map(|_| ()).map_err(|_| ());
-  tokio::run(server);
+  # let server = select(ok::<_, ()>(()), server).map(|_| ());
+  server.await
 }
 ```
 

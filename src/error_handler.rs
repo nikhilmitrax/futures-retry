@@ -19,6 +19,7 @@ use crate::RetryPolicy;
 /// }
 ///
 /// impl CustomHandler {
+///
 ///     pub fn new(attempts: usize) -> Self {
 ///         Self {
 ///             attempt: 0,
@@ -47,8 +48,6 @@ use crate::RetryPolicy;
 ///         self.attempt = 0;
 ///     }
 /// }
-/// #
-/// # fn main() {}
 /// ```
 pub trait ErrorHandler<InError> {
     /// An error that the `handle` function will produce.
@@ -72,7 +71,7 @@ pub trait ErrorHandler<InError> {
 
 impl<InError, F, OutError> ErrorHandler<InError> for F
 where
-    F: FnMut(InError) -> RetryPolicy<OutError>,
+    F: Unpin + FnMut(InError) -> RetryPolicy<OutError>,
 {
     type OutError = OutError;
 
