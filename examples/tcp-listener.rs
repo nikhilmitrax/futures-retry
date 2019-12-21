@@ -9,12 +9,10 @@ use tokio::net::{TcpListener, TcpStream};
 async fn process_connection(socket: TcpStream) -> io::Result<()> {
     let (mut reader, mut writer) = socket.split();
     // Copy the data back to the client
-    let conn = move || {
-        async move {
-            match reader.copy(&mut writer).await {
-                Ok(n) => println!("Wrote {} bytes", n),
-                Err(err) => println!("Can't copy data: IO error {:?}", err),
-            }
+    let conn = move || async move {
+        match reader.copy(&mut writer).await {
+            Ok(n) => println!("Wrote {} bytes", n),
+            Err(err) => println!("Can't copy data: IO error {:?}", err),
         }
     };
 
