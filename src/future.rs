@@ -9,6 +9,20 @@ use std::{
 };
 use tokio::time;
 
+trait PollExt<T, E> {
+    fn instrument<W>(self, with: W) -> Poll<Result<(T, W), (E, W)>>;
+}
+
+impl<T, E> PollExt<T, E> for Poll<Result<T, E>> {
+    fn instrument<W>(self, with: W) -> Poll<Result<(T, W), (E, W)>> {
+        match self {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(x)) => Poll::Ready(Ok((x, with))),
+            Poll::Ready(Err(x)) => Poll::Ready(Err((x, with))),
+        }
+    }
+}
+
 /// A factory trait used to create futures.
 ///
 /// We need a factory for the retry logic because when (and if) a future returns an error, its
@@ -52,6 +66,7 @@ where
 {
     factory: F,
     error_action: R,
+    attempt: usize,
     #[pin]
     state: RetryState<F::FutureItem>,
 }
@@ -81,6 +96,7 @@ impl<F: FutureFactory, R> FutureRetry<F, R> {
             factory,
             error_action,
             state: RetryState::NotStarted,
+            attempt: 1,
         }
     }
 }
@@ -89,12 +105,14 @@ impl<F: FutureFactory, R> Future for FutureRetry<F, R>
 where
     R: ErrorHandler<<F::FutureItem as TryFuture>::Error>,
 {
-    type Output = Result<<<F as FutureFactory>::FutureItem as TryFuture>::Ok, R::OutError>;
+    type Output =
+        Result<(<<F as FutureFactory>::FutureItem as TryFuture>::Ok, usize), (R::OutError, usize)>;
 
     #[project]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             let this = self.as_mut().project();
+            let attempt = *this.attempt;
             #[project]
             let new_state = match this.state.project() {
                 RetryState::NotStarted => RetryState::WaitingForFuture(this.factory.new()),
@@ -104,16 +122,20 @@ where
                 }
                 RetryState::WaitingForFuture(future) => match ready!(future.try_poll(cx)) {
                     Ok(x) => {
-                        this.error_action.ok();
-                        return Poll::Ready(Ok(x));
+                        this.error_action.ok(attempt);
+                        *this.attempt = 1;
+                        return Poll::Ready(Ok((x, attempt)));
                     }
-                    Err(e) => match this.error_action.handle(e) {
-                        RetryPolicy::ForwardError(e) => return Poll::Ready(Err(e)),
-                        RetryPolicy::Repeat => RetryState::WaitingForFuture(this.factory.new()),
-                        RetryPolicy::WaitRetry(duration) => {
-                            RetryState::TimerActive(time::delay_for(duration))
+                    Err(e) => {
+                        *this.attempt += 1;
+                        match this.error_action.handle(attempt, e) {
+                            RetryPolicy::ForwardError(e) => return Poll::Ready(Err((e, attempt))),
+                            RetryPolicy::Repeat => RetryState::WaitingForFuture(this.factory.new()),
+                            RetryPolicy::WaitRetry(duration) => {
+                                RetryState::TimerActive(time::delay_for(duration))
+                            }
                         }
-                    },
+                    }
                 },
             };
 
@@ -153,13 +175,13 @@ mod tests {
     #[test]
     fn naive() {
         let f = FutureRetry::new(|| ok::<_, u8>(1u8), |_| RetryPolicy::Repeat::<u8>);
-        assert_eq!(Ok(1u8), block_on(f.into_future()));
+        assert_eq!(Ok((1u8, 1)), block_on(f.into_future()));
     }
 
     #[test]
     fn naive_error_forward() {
         let f = FutureRetry::new(|| err::<u8, _>(1u8), RetryPolicy::ForwardError);
-        assert_eq!(Err(1u8), block_on(f.into_future()));
+        assert_eq!(Err((1u8, 1)), block_on(f.into_future()));
     }
 
     #[tokio::test]
@@ -168,7 +190,7 @@ mod tests {
             RetryPolicy::WaitRetry::<u8>(Duration::from_millis(10))
         })
         .into_future();
-        assert_eq!(Ok(3), f.await);
+        assert_eq!(Ok((3, 2)), f.await);
     }
 
     #[test]
@@ -176,7 +198,7 @@ mod tests {
         let f = FutureRetry::new(FutureIterator(vec![err(2u8), ok(3u8)].into_iter()), |_| {
             RetryPolicy::Repeat::<u8>
         });
-        assert_eq!(Ok(3u8), block_on(f.into_future()));
+        assert_eq!(Ok((3u8, 2)), block_on(f.into_future()));
     }
 
     #[test]
@@ -185,6 +207,6 @@ mod tests {
             FutureIterator(vec![err(2u8), ok(3u8)].into_iter()),
             RetryPolicy::ForwardError,
         );
-        assert_eq!(Err(2u8), block_on(f.into_future()));
+        assert_eq!(Err((2u8, 1)), block_on(f.into_future()));
     }
 }

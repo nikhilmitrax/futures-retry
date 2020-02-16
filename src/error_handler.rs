@@ -14,7 +14,6 @@ use crate::RetryPolicy;
 /// use std::time::Duration;
 ///
 /// pub struct CustomHandler {
-///     attempt: usize,
 ///     max_attempts: usize,
 /// }
 ///
@@ -22,7 +21,6 @@ use crate::RetryPolicy;
 ///
 ///     pub fn new(attempts: usize) -> Self {
 ///         Self {
-///             attempt: 0,
 ///             max_attempts: attempts,
 ///         }
 ///     }
@@ -31,21 +29,16 @@ use crate::RetryPolicy;
 /// impl ErrorHandler<io::Error> for CustomHandler {
 ///     type OutError = io::Error;
 ///
-///     fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
-///         if self.attempt == self.max_attempts {
+///     fn handle(&mut self, attempt: usize, e: io::Error) -> RetryPolicy<io::Error> {
+///         if attempt == self.max_attempts {
 ///             eprintln!("No attempts left");
 ///             return RetryPolicy::ForwardError(e);
 ///         }
-///         self.attempt += 1;
 ///         match e.kind() {
 ///             io::ErrorKind::ConnectionRefused => RetryPolicy::WaitRetry(Duration::from_secs(1)),
 ///             io::ErrorKind::TimedOut => RetryPolicy::Repeat,
 ///             _ => RetryPolicy::ForwardError(e),
 ///         }
-///     }
-///
-///     fn ok(&mut self) {
-///         self.attempt = 0;
 ///     }
 /// }
 /// ```
@@ -57,16 +50,15 @@ pub trait ErrorHandler<InError> {
     ///
     /// Refer to the [`RetryPolicy`](enum.RetryPolicy.html) type to understand what this method
     /// might return.
-    fn handle(&mut self, _: InError) -> RetryPolicy<Self::OutError>;
+    fn handle(&mut self, attempt: usize, _: InError) -> RetryPolicy<Self::OutError>;
 
     /// This method is called on a successful execution (before returning an item) of the underlying
     /// future/stream.
     ///
-    /// One can use this method to reset an internal state, like a consecutive errors counter for
-    /// example.
+    /// One can use this method to reset an internal state.
     ///
     /// By default the method is a no-op.
-    fn ok(&mut self) {}
+    fn ok(&mut self, _attempt: usize) {}
 }
 
 impl<InError, F, OutError> ErrorHandler<InError> for F
@@ -75,7 +67,7 @@ where
 {
     type OutError = OutError;
 
-    fn handle(&mut self, e: InError) -> RetryPolicy<OutError> {
+    fn handle(&mut self, _attempt: usize, e: InError) -> RetryPolicy<OutError> {
         (self)(e)
     }
 }

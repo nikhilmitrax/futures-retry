@@ -8,7 +8,6 @@ use tokio::prelude::*;
 /// An I/O handler that counts attempts.
 struct IoHandler<D> {
     max_attempts: usize,
-    current_attempt: usize,
     display_name: D,
 }
 
@@ -16,7 +15,6 @@ impl<D> IoHandler<D> {
     fn new(max_attempts: usize, display_name: D) -> Self {
         IoHandler {
             max_attempts,
-            current_attempt: 0,
             display_name,
         }
     }
@@ -28,9 +26,8 @@ where
 {
     type OutError = io::Error;
 
-    fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
-        self.current_attempt += 1;
-        if self.current_attempt > self.max_attempts {
+    fn handle(&mut self, current_attempt: usize, e: io::Error) -> RetryPolicy<io::Error> {
+        if current_attempt > self.max_attempts {
             eprintln!(
                 "[{}] All attempts ({}) have been used",
                 self.display_name, self.max_attempts
@@ -39,7 +36,7 @@ where
         }
         eprintln!(
             "[{}] Attempt {}/{} has failed",
-            self.display_name, self.current_attempt, self.max_attempts
+            self.display_name, current_attempt, self.max_attempts
         );
         match e.kind() {
             io::ErrorKind::Interrupted
@@ -64,7 +61,7 @@ async fn connect_and_send(addr: SocketAddr) -> io::Result<()> {
         },
         IoHandler::new(3, "Establishing a connection"),
     );
-    let mut socket = connection.await?;
+    let (mut socket, _) = connection.await.map_err(|(e, _attempt)| e)?;
     let (_, mut writer) = socket.split();
     writer.write_all(b"Yo!").await
 }
@@ -80,10 +77,12 @@ async fn main() -> io::Result<()> {
         },
         IoHandler::new(2, "Running a client"),
     )
-    .await?;
+    .await
+    .map_err(|(e, _attempt)| {
+        eprintln!("Connect and send has failed: {}", e);
+        e
+    })?;
     println!("Done");
-    // .map_err(|e| eprintln!("Connect and send has failed: {}", e))
-    // .map(|_| println!("Done"));
     // To check out that attempts logic works as expected, launch a listener within 30-seconds time
     // period after launching the example, e.g. on linux:
     //

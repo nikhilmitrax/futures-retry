@@ -45,9 +45,8 @@ where
 {
     type OutError = io::Error;
 
-    fn handle(&mut self, e: io::Error) -> RetryPolicy<io::Error> {
-        self.current_attempt += 1;
-        if self.current_attempt > self.max_attempts {
+    fn handle(&mut self, current_attempt: usize, e: io::Error) -> RetryPolicy<io::Error> {
+        if current_attempt > self.max_attempts {
             eprintln!(
                 "[{}] All attempts ({}) have been used up",
                 self.display_name, self.max_attempts
@@ -56,7 +55,7 @@ where
         }
         eprintln!(
             "[{}] Attempt {}/{} has failed",
-            self.display_name, self.current_attempt, self.max_attempts
+            self.display_name, current_attempt, self.max_attempts
         );
         match e.kind() {
             io::ErrorKind::Interrupted
@@ -69,14 +68,9 @@ where
             _ => RetryPolicy::WaitRetry(self.calculate_wait_duration()),
         }
     }
-
-    fn ok(&mut self) {
-        // Reset the attempts counter when the underlying stream/future procudes an `Ok` result.
-        self.current_attempt = 0;
-    }
 }
 
-async fn process_connection(mut socket: TcpStream) -> io::Result<()> {
+async fn process_connection((mut socket, _attempt): (TcpStream, usize)) -> io::Result<()> {
     // Copy the data back to the client
     let conn = move || async move {
         let (mut reader, mut writer) = socket.split();
@@ -98,6 +92,7 @@ async fn main() -> io::Result<()> {
 
     tcp.incoming()
         .retry(IoHandler::new(3, "Accepting connections"))
+        .map_err(|(x, _)| x)
         .try_for_each(process_connection)
         .await
 }

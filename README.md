@@ -54,12 +54,12 @@ async fn main() {
   let mut listener = TcpListener::bind(addr).await.unwrap();
   let server = listener.incoming()
     .retry(handle_error) // Magic happens here
-    .and_then(|stream| {
+    .and_then(|(stream, _attempt)| {
       tokio::spawn(serve_connection(stream));
       ok(())
     })
     .try_for_each(|_| ok(()))
-    .map_err(|e| eprintln!("Caught an error {}", e));
+    .map_err(|(e, _attempt)| eprintln!("Caught an error {}", e));
   # // This nasty hack is required to exit immediately when running the doc tests.
   # let server = select(ok::<_, ()>(()), server).map(|_| ());
   server.await
