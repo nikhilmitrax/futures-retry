@@ -37,6 +37,8 @@ async fn main() -> io::Result<()> {
             io::ErrorKind::PermissionDenied => RetryPolicy::ForwardError(e),
             _ => RetryPolicy::WaitRetry(Duration::from_millis(5)),
         })
+        .map_ok(|(x, _)| x)
+        .map_err(|(x, _)| x)
         .try_for_each(process_connection)
         .await
 }

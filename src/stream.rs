@@ -8,6 +8,21 @@ use std::{
 };
 use tokio::time;
 
+trait PollExt<T, E> {
+    fn instrument<W>(self, with: W) -> Poll<Result<Option<(T, W)>, (E, W)>>;
+}
+
+impl<T, E> PollExt<T, E> for Poll<Result<Option<T>, E>> {
+    fn instrument<W>(self, with: W) -> Poll<Result<Option<(T, W)>, (E, W)>> {
+        match self {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(None)) => Poll::Ready(Ok(None)),
+            Poll::Ready(Ok(Some(x))) => Poll::Ready(Ok(Some((x, with)))),
+            Poll::Ready(Err(x)) => Poll::Ready(Err((x, with))),
+        }
+    }
+}
+
 /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
 /// poll for future stream's items with a delay.
 ///
@@ -28,6 +43,7 @@ pub struct StreamRetry<F, S> {
     error_action: F,
     #[pin]
     stream: S,
+    attempt: usize,
     #[pin]
     state: RetryState,
 }
@@ -64,12 +80,12 @@ pub struct StreamRetry<F, S> {
 ///   # TcpListener::bind("[::]:0").await.unwrap();
 ///   let server = listener.incoming()
 ///     .retry(handle_error)
-///     .and_then(|stream| {
+///     .and_then(|(stream, _attempt)| {
 ///       tokio::spawn(serve_connection(stream));
 ///       ok(())
 ///     })
 ///     .try_for_each(|_| ok(()))
-///     .map_err(|e| eprintln!("Caught an error {}", e));
+///     .map_err(|(e, _attempt)| eprintln!("Caught an error {}", e));
 ///   # // This nasty hack is required to exit immediately when running the doc tests.
 ///   # let server = select(ok::<_, ()>(()), server).map(|_| ());
 ///   server.await
@@ -111,9 +127,15 @@ impl<F, S> StreamRetry<F, S> {
     where
         S: TryStream,
     {
+        Self::with_counter(stream, error_action, 1)
+    }
+
+    /// Like a `new` method, but a custom attempt counter initial value might be provided.
+    pub fn with_counter(stream: S, error_action: F, attempt_counter: usize) -> Self {
         Self {
             error_action,
             stream,
+            attempt: attempt_counter,
             state: RetryState::WaitingForStream,
         }
     }
@@ -124,12 +146,13 @@ where
     S: TryStream,
     F: ErrorHandler<S::Error>,
 {
-    type Item = Result<S::Ok, F::OutError>;
+    type Item = Result<(S::Ok, usize), (F::OutError, usize)>;
 
     #[project]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         loop {
             let this = self.as_mut().project();
+            let attempt = *this.attempt;
             #[project]
             let new_state = match this.state.project() {
                 RetryState::TimerActive(delay) => {
@@ -138,19 +161,25 @@ where
                 }
                 RetryState::WaitingForStream => match ready!(this.stream.try_poll_next(cx)) {
                     Some(Ok(x)) => {
-                        this.error_action.ok();
-                        return Poll::Ready(Some(Ok(x)));
+                        *this.attempt = 1;
+                        this.error_action.ok(attempt);
+                        return Poll::Ready(Some(Ok((x, attempt))));
                     }
                     None => {
                         return Poll::Ready(None);
                     }
-                    Some(Err(e)) => match this.error_action.handle(e) {
-                        RetryPolicy::ForwardError(e) => return Poll::Ready(Some(Err(e))),
-                        RetryPolicy::Repeat => RetryState::WaitingForStream,
-                        RetryPolicy::WaitRetry(duration) => {
-                            RetryState::TimerActive(time::delay_for(duration))
+                    Some(Err(e)) => {
+                        *this.attempt += 1;
+                        match this.error_action.handle(attempt, e) {
+                            RetryPolicy::ForwardError(e) => {
+                                return Poll::Ready(Some(Err((e, attempt))))
+                            }
+                            RetryPolicy::Repeat => RetryState::WaitingForStream,
+                            RetryPolicy::WaitRetry(duration) => {
+                                RetryState::TimerActive(time::delay_for(duration))
+                            }
                         }
-                    },
+                    }
                 },
             };
             self.as_mut().project().state.set(new_state);
@@ -169,7 +198,7 @@ mod test {
         let stream = iter(vec![Ok::<_, u8>(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat::<()>);
         assert_eq!(
-            Ok(vec![17, 19]),
+            Ok(vec![(17, 1), (19, 1)]),
             block_on_stream(retry.into_stream()).collect()
         );
     }
@@ -179,7 +208,7 @@ mod test {
         let stream = iter(vec![Ok(1), Err(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat::<()>);
         assert_eq!(
-            Ok(vec![1, 19]),
+            Ok(vec![(1, 1), (19, 2)]),
             block_on_stream(retry.into_stream()).collect()
         );
     }
@@ -192,13 +221,16 @@ mod test {
         })
         .try_collect()
         .into_future();
-        assert_eq!(Ok(vec!(19)), retry.await);
+        assert_eq!(Ok(vec!((19, 2))), retry.await);
     }
 
     #[test]
     fn propagate() {
         let stream = iter(vec![Err(17u8), Ok(19u16)]);
         let retry = StreamRetry::new(stream, RetryPolicy::ForwardError);
-        assert_eq!(Some(Err(17u8)), block_on_stream(retry.into_stream()).next());
+        assert_eq!(
+            Some(Err((17u8, 1))),
+            block_on_stream(retry.into_stream()).next()
+        );
     }
 }

@@ -22,8 +22,10 @@ fn handle_connection_error(e: io::Error) -> RetryPolicy<io::Error> {
 async fn main() -> io::Result<()> {
     let addr = "127.0.0.1:12345";
     // Try to connect until we succeed or until an unrecoverable error is encountered.
-    let mut socket =
-        FutureRetry::new(move || TcpStream::connect(addr), handle_connection_error).await?;
+    let (mut socket, _attempt) =
+        FutureRetry::new(move || TcpStream::connect(addr), handle_connection_error)
+            .await
+            .map_err(|(e, _attempt)| e)?;
     // .. and then try to write some data only once. If you want to retry on an error here as
     // well, wrap up the whole `let socket = ...` in a `FutureRetry`.
     let (_, mut writer) = socket.split();
