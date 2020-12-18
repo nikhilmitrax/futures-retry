@@ -1,4 +1,4 @@
-use futures::prelude::*;
+use futures::TryStreamExt;
 use futures_retry::{RetryPolicy, StreamRetryExt};
 use std::time::Duration;
 use tokio::io;

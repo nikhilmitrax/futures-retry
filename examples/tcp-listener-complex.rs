@@ -1,10 +1,8 @@
-use futures::prelude::*;
+use futures::TryStreamExt;
 use futures_retry::{ErrorHandler, RetryPolicy, StreamRetryExt};
 use std::time::Duration;
-use tokio::{
-    io,
-    net::{TcpListener, TcpStream},
-};
+use tokio::io;
+use tokio::net::{TcpListener, TcpStream};
 
 /// An I/O errors handler that counts consecutive error attempts.
 struct IoHandler<D> {
