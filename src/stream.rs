@@ -8,21 +8,6 @@ use std::{
 };
 use tokio::time;
 
-trait PollExt<T, E> {
-    fn instrument<W>(self, with: W) -> Poll<Result<Option<(T, W)>, (E, W)>>;
-}
-
-impl<T, E> PollExt<T, E> for Poll<Result<Option<T>, E>> {
-    fn instrument<W>(self, with: W) -> Poll<Result<Option<(T, W)>, (E, W)>> {
-        match self {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(None)) => Poll::Ready(Ok(None)),
-            Poll::Ready(Ok(Some(x))) => Poll::Ready(Ok(Some((x, with)))),
-            Poll::Ready(Err(x)) => Poll::Ready(Err((x, with))),
-        }
-    }
-}
-
 pin_project! {
     /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
     /// poll for future stream's items with a delay.
@@ -107,14 +92,6 @@ pub trait StreamRetryExt: TryStream {
 }
 
 impl<S: ?Sized> StreamRetryExt for S where S: TryStream {}
-
-// pin_project! {
-//     #[project = RetryStateProj]
-//     enum RetryState {
-//         WaitingForStream,
-//         TimerActive(#[pin] time::Sleep),
-//     }
-// }
 
 pin_project! {
     #[project = RetryStateProj]

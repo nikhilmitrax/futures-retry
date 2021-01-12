@@ -9,20 +9,6 @@ use std::{
 };
 use tokio::time;
 
-trait PollExt<T, E> {
-    fn instrument<W>(self, with: W) -> Poll<Result<(T, W), (E, W)>>;
-}
-
-impl<T, E> PollExt<T, E> for Poll<Result<T, E>> {
-    fn instrument<W>(self, with: W) -> Poll<Result<(T, W), (E, W)>> {
-        match self {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(x)) => Poll::Ready(Ok((x, with))),
-            Poll::Ready(Err(x)) => Poll::Ready(Err((x, with))),
-        }
-    }
-}
-
 /// A factory trait used to create futures.
 ///
 /// We need a factory for the retry logic because when (and if) a future returns an error, its
