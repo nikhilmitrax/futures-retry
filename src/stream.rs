@@ -1,6 +1,6 @@
 use crate::{ErrorHandler, RetryPolicy};
 use futures::{ready, Stream, TryStream};
-use pin_project::{pin_project, project};
+use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
@@ -8,44 +8,30 @@ use std::{
 };
 use tokio::time;
 
-trait PollExt<T, E> {
-    fn instrument<W>(self, with: W) -> Poll<Result<Option<(T, W)>, (E, W)>>;
-}
-
-impl<T, E> PollExt<T, E> for Poll<Result<Option<T>, E>> {
-    fn instrument<W>(self, with: W) -> Poll<Result<Option<(T, W)>, (E, W)>> {
-        match self {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(None)) => Poll::Ready(Ok(None)),
-            Poll::Ready(Ok(Some(x))) => Poll::Ready(Ok(Some((x, with)))),
-            Poll::Ready(Err(x)) => Poll::Ready(Err((x, with))),
-        }
+pin_project! {
+    /// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
+    /// poll for future stream's items with a delay.
+    ///
+    /// This type is similar to [`FutureRetry`](struct.FutureRetry.html), but with a different
+    /// semantics. For example, if for [`FutureRetry`](struct.FutureRetry.html) we need a factory that
+    /// creates `Future`s, we don't need one for `Stream`s, since `Stream` itself is a natural producer
+    /// of new items, so we don't have to recreated it if an error is encountered.
+    ///
+    /// A typical usage might be recovering from connection errors while trying to accept a connection
+    /// on a TCP server.
+    ///
+    /// A `tcp-listener` example is available in the `examples` folder.
+    ///
+    /// Also have a look at [`StreamRetryExt`](trait.StreamRetryExt.html) trait for a more convenient
+    /// usage.
+    pub struct StreamRetry<F, S> {
+        error_action: F,
+        #[pin]
+        stream: S,
+        attempt: usize,
+        #[pin]
+        state: RetryState,
     }
-}
-
-/// Provides a way to handle errors during a `Stream` execution, i.e. it gives you an ability to
-/// poll for future stream's items with a delay.
-///
-/// This type is similar to [`FutureRetry`](struct.FutureRetry.html), but with a different
-/// semantics. For example, if for [`FutureRetry`](struct.FutureRetry.html) we need a factory that
-/// creates `Future`s, we don't need one for `Stream`s, since `Stream` itself is a natural producer
-/// of new items, so we don't have to recreated it if an error is encountered.
-///
-/// A typical usage might be recovering from connection errors while trying to accept a connection
-/// on a TCP server.
-///
-/// A `tcp-listener` example is available in the `examples` folder.
-///
-/// Also have a look at [`StreamRetryExt`](trait.StreamRetryExt.html) trait for a more convenient
-/// usage.
-#[pin_project]
-pub struct StreamRetry<F, S> {
-    error_action: F,
-    #[pin]
-    stream: S,
-    attempt: usize,
-    #[pin]
-    state: RetryState,
 }
 
 /// An extention trait for `Stream` which allows to use `StreamRetry` in a chain-like manner.
@@ -57,7 +43,7 @@ pub struct StreamRetry<F, S> {
 /// ```
 /// // ...
 /// use futures_retry::{RetryPolicy, StreamRetryExt};
-/// # use futures::{TryStreamExt, TryFutureExt, future::{ok, select}, FutureExt};
+/// # use futures::{TryStreamExt, TryFutureExt, future::{ok, select}, FutureExt, stream};
 /// # use std::io;
 /// # use std::time::Duration;
 /// # use tokio::net::{TcpListener, TcpStream};
@@ -78,15 +64,19 @@ pub struct StreamRetry<F, S> {
 /// async fn main() {
 ///   let mut listener: TcpListener = // ...
 ///   # TcpListener::bind("[::]:0").await.unwrap();
-///   let server = listener.incoming()
-///     .retry(handle_error)
-///     .and_then(|(stream, _attempt)| {
-///       tokio::spawn(serve_connection(stream));
-///       ok(())
-///     })
-///     .try_for_each(|_| ok(()))
-///     .map_err(|(e, _attempt)| eprintln!("Caught an error {}", e));
+///   let server = stream::try_unfold(listener, |listener| async move {
+///     Ok(Some((listener.accept().await?.0, listener)))
+///   })
+///   .retry(handle_error)
+///   .and_then(|(stream, _attempt)| {
+///     tokio::spawn(serve_connection(stream));
+///     ok(())
+///   })
+///   .try_for_each(|_| ok(()))
+///   .map_err(|(e, _attempt)| eprintln!("Caught an error {}", e));
+///
 ///   # // This nasty hack is required to exit immediately when running the doc tests.
+///   # futures::pin_mut!(server);
 ///   # let server = select(ok::<_, ()>(()), server).map(|_| ());
 ///   server.await
 /// }
@@ -103,10 +93,12 @@ pub trait StreamRetryExt: TryStream {
 
 impl<S: ?Sized> StreamRetryExt for S where S: TryStream {}
 
-#[pin_project]
-enum RetryState {
-    WaitingForStream,
-    TimerActive(#[pin] time::Delay),
+pin_project! {
+    #[project = RetryStateProj]
+    enum RetryState {
+        WaitingForStream,
+        TimerActive { #[pin] delay: time::Sleep },
+    }
 }
 
 impl<F, S> StreamRetry<F, S> {
@@ -148,18 +140,16 @@ where
 {
     type Item = Result<(S::Ok, usize), (F::OutError, usize)>;
 
-    #[project]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         loop {
             let this = self.as_mut().project();
             let attempt = *this.attempt;
-            #[project]
             let new_state = match this.state.project() {
-                RetryState::TimerActive(delay) => {
+                RetryStateProj::TimerActive { delay } => {
                     ready!(delay.poll(cx));
                     RetryState::WaitingForStream
                 }
-                RetryState::WaitingForStream => match ready!(this.stream.try_poll_next(cx)) {
+                RetryStateProj::WaitingForStream => match ready!(this.stream.try_poll_next(cx)) {
                     Some(Ok(x)) => {
                         *this.attempt = 1;
                         this.error_action.ok(attempt);
@@ -175,9 +165,9 @@ where
                                 return Poll::Ready(Some(Err((e, attempt))))
                             }
                             RetryPolicy::Repeat => RetryState::WaitingForStream,
-                            RetryPolicy::WaitRetry(duration) => {
-                                RetryState::TimerActive(time::delay_for(duration))
-                            }
+                            RetryPolicy::WaitRetry(duration) => RetryState::TimerActive {
+                                delay: time::sleep(duration),
+                            },
                         }
                     }
                 },
@@ -190,32 +180,32 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use futures::{executor::block_on_stream, stream::iter, TryFutureExt, TryStreamExt};
+    use futures::{pin_mut, prelude::*};
     use std::time::Duration;
 
-    #[test]
-    fn naive() {
-        let stream = iter(vec![Ok::<_, u8>(17), Ok(19)]);
+    #[tokio::test]
+    async fn naive() {
+        let stream = stream::iter(vec![Ok::<_, u8>(17u8), Ok(19u8)]);
         let retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat::<()>);
         assert_eq!(
             Ok(vec![(17, 1), (19, 1)]),
-            block_on_stream(retry.into_stream()).collect()
+            retry.try_collect::<Vec<_>>().await,
         );
     }
 
-    #[test]
-    fn repeat() {
-        let stream = iter(vec![Ok(1), Err(17), Ok(19)]);
+    #[tokio::test]
+    async fn repeat() {
+        let stream = stream::iter(vec![Ok(1), Err(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| RetryPolicy::Repeat::<()>);
         assert_eq!(
             Ok(vec![(1, 1), (19, 2)]),
-            block_on_stream(retry.into_stream()).collect()
+            retry.try_collect::<Vec<_>>().await,
         );
     }
 
     #[tokio::test]
     async fn wait() {
-        let stream = iter(vec![Err(17), Ok(19)]);
+        let stream = stream::iter(vec![Err(17), Ok(19)]);
         let retry = StreamRetry::new(stream, |_| {
             RetryPolicy::WaitRetry::<()>(Duration::from_millis(10))
         })
@@ -224,13 +214,11 @@ mod test {
         assert_eq!(Ok(vec!((19, 2))), retry.await);
     }
 
-    #[test]
-    fn propagate() {
-        let stream = iter(vec![Err(17u8), Ok(19u16)]);
+    #[tokio::test]
+    async fn propagate() {
+        let stream = stream::iter(vec![Err(17u8), Ok(19u16)]);
         let retry = StreamRetry::new(stream, RetryPolicy::ForwardError);
-        assert_eq!(
-            Some(Err((17u8, 1))),
-            block_on_stream(retry.into_stream()).next()
-        );
+        pin_mut!(retry);
+        assert_eq!(Some(Err((17u8, 1))), retry.next().await,);
     }
 }

@@ -1,4 +1,4 @@
-use futures::TryStreamExt;
+use futures::prelude::*;
 use futures_retry::{RetryPolicy, StreamRetryExt};
 use std::time::Duration;
 use tokio::io;
@@ -22,23 +22,24 @@ async fn process_connection(mut socket: TcpStream) -> io::Result<()> {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let addr = "127.0.0.1:12345";
-    let mut server = TcpListener::bind(addr).await.unwrap();
+    let server = TcpListener::bind(addr).await.unwrap();
     println!("Listening at {}", server.local_addr().unwrap());
 
-    server
-        .incoming()
-        .retry(|e: io::Error| match e.kind() {
-            io::ErrorKind::Interrupted
-            | io::ErrorKind::ConnectionRefused
-            | io::ErrorKind::ConnectionReset
-            | io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::NotConnected
-            | io::ErrorKind::BrokenPipe => RetryPolicy::Repeat,
-            io::ErrorKind::PermissionDenied => RetryPolicy::ForwardError(e),
-            _ => RetryPolicy::WaitRetry(Duration::from_millis(5)),
-        })
-        .map_ok(|(x, _)| x)
-        .map_err(|(x, _)| x)
-        .try_for_each(process_connection)
-        .await
+    stream::try_unfold(server, |server| async move {
+        Ok(Some((server.accept().await?.0, server)))
+    })
+    .retry(|e: io::Error| match e.kind() {
+        io::ErrorKind::Interrupted
+        | io::ErrorKind::ConnectionRefused
+        | io::ErrorKind::ConnectionReset
+        | io::ErrorKind::ConnectionAborted
+        | io::ErrorKind::NotConnected
+        | io::ErrorKind::BrokenPipe => RetryPolicy::Repeat,
+        io::ErrorKind::PermissionDenied => RetryPolicy::ForwardError(e),
+        _ => RetryPolicy::WaitRetry(Duration::from_millis(5)),
+    })
+    .map_ok(|(x, _)| x)
+    .map_err(|(x, _)| x)
+    .try_for_each(process_connection)
+    .await
 }

@@ -1,6 +1,6 @@
 use crate::{ErrorHandler, RetryPolicy};
 use futures::{ready, TryFuture};
-use pin_project::{pin_project, project};
+use pin_project_lite::pin_project;
 use std::{
     future::Future,
     marker::Unpin,
@@ -8,20 +8,6 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::time;
-
-trait PollExt<T, E> {
-    fn instrument<W>(self, with: W) -> Poll<Result<(T, W), (E, W)>>;
-}
-
-impl<T, E> PollExt<T, E> for Poll<Result<T, E>> {
-    fn instrument<W>(self, with: W) -> Poll<Result<(T, W), (E, W)>> {
-        match self {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(x)) => Poll::Ready(Ok((x, with))),
-            Poll::Ready(Err(x)) => Poll::Ready(Err((x, with))),
-        }
-    }
-}
 
 /// A factory trait used to create futures.
 ///
@@ -52,30 +38,33 @@ where
     }
 }
 
-/// A future that transparently launches an underlying future (created by a provided factory each
-/// time) as many times as needed to get things done.
-///
-/// It is useful fot situations when you need to make several attempts, e.g. for establishing
-/// connections, RPC calls.
-///
-/// There is also a type to handle `Stream` errors: [`StreamRetry`](struct.StreamRetry.html).
-#[pin_project]
-pub struct FutureRetry<F, R>
-where
-    F: FutureFactory,
-{
-    factory: F,
-    error_action: R,
-    attempt: usize,
-    #[pin]
-    state: RetryState<F::FutureItem>,
+pin_project! {
+    /// A future that transparently launches an underlying future (created by a provided factory each
+    /// time) as many times as needed to get things done.
+    ///
+    /// It is useful fot situations when you need to make several attempts, e.g. for establishing
+    /// connections, RPC calls.
+    ///
+    /// There is also a type to handle `Stream` errors: [`StreamRetry`](struct.StreamRetry.html).#[pin_project]
+    pub struct FutureRetry<F, R>
+    where
+        F: FutureFactory,
+    {
+        factory: F,
+        error_action: R,
+        attempt: usize,
+        #[pin]
+        state: RetryState<F::FutureItem>,
+    }
 }
 
-#[pin_project]
-enum RetryState<F> {
-    NotStarted,
-    WaitingForFuture(#[pin] F),
-    TimerActive(#[pin] time::Delay),
+pin_project! {
+    #[project = RetryStateProj]
+    enum RetryState<F> {
+        NotStarted,
+        WaitingForFuture { #[pin] future: F },
+        TimerActive { #[pin] delay: time::Sleep },
+    }
 }
 
 impl<F: FutureFactory, R> FutureRetry<F, R> {
@@ -108,19 +97,21 @@ where
     type Output =
         Result<(<<F as FutureFactory>::FutureItem as TryFuture>::Ok, usize), (R::OutError, usize)>;
 
-    #[project]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             let this = self.as_mut().project();
             let attempt = *this.attempt;
-            #[project]
             let new_state = match this.state.project() {
-                RetryState::NotStarted => RetryState::WaitingForFuture(this.factory.new()),
-                RetryState::TimerActive(delay) => {
+                RetryStateProj::NotStarted => RetryState::WaitingForFuture {
+                    future: this.factory.new(),
+                },
+                RetryStateProj::TimerActive { delay } => {
                     ready!(delay.poll(cx));
-                    RetryState::WaitingForFuture(this.factory.new())
+                    RetryState::WaitingForFuture {
+                        future: this.factory.new(),
+                    }
                 }
-                RetryState::WaitingForFuture(future) => match ready!(future.try_poll(cx)) {
+                RetryStateProj::WaitingForFuture { future } => match ready!(future.try_poll(cx)) {
                     Ok(x) => {
                         this.error_action.ok(attempt);
                         *this.attempt = 1;
@@ -130,10 +121,12 @@ where
                         *this.attempt += 1;
                         match this.error_action.handle(attempt, e) {
                             RetryPolicy::ForwardError(e) => return Poll::Ready(Err((e, attempt))),
-                            RetryPolicy::Repeat => RetryState::WaitingForFuture(this.factory.new()),
-                            RetryPolicy::WaitRetry(duration) => {
-                                RetryState::TimerActive(time::delay_for(duration))
-                            }
+                            RetryPolicy::Repeat => RetryState::WaitingForFuture {
+                                future: this.factory.new(),
+                            },
+                            RetryPolicy::WaitRetry(duration) => RetryState::TimerActive {
+                                delay: time::sleep(duration),
+                            },
                         }
                     }
                 },
@@ -147,7 +140,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::executor::block_on;
     use futures::{
         future::{err, ok},
         TryFutureExt,
@@ -172,16 +164,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn naive() {
+    #[tokio::test]
+    async fn naive() {
         let f = FutureRetry::new(|| ok::<_, u8>(1u8), |_| RetryPolicy::Repeat::<u8>);
-        assert_eq!(Ok((1u8, 1)), block_on(f.into_future()));
+        assert_eq!(Ok((1u8, 1)), f.await);
     }
 
-    #[test]
-    fn naive_error_forward() {
+    #[tokio::test]
+    async fn naive_error_forward() {
         let f = FutureRetry::new(|| err::<u8, _>(1u8), RetryPolicy::ForwardError);
-        assert_eq!(Err((1u8, 1)), block_on(f.into_future()));
+        assert_eq!(Err((1u8, 1)), f.await);
     }
 
     #[tokio::test]
@@ -193,20 +185,20 @@ mod tests {
         assert_eq!(Ok((3, 2)), f.await);
     }
 
-    #[test]
-    fn more_complicated_repeat() {
+    #[tokio::test]
+    async fn more_complicated_repeat() {
         let f = FutureRetry::new(FutureIterator(vec![err(2u8), ok(3u8)].into_iter()), |_| {
             RetryPolicy::Repeat::<u8>
         });
-        assert_eq!(Ok((3u8, 2)), block_on(f.into_future()));
+        assert_eq!(Ok((3u8, 2)), f.await);
     }
 
-    #[test]
-    fn more_complicated_forward() {
+    #[tokio::test]
+    async fn more_complicated_forward() {
         let f = FutureRetry::new(
             FutureIterator(vec![err(2u8), ok(3u8)].into_iter()),
             RetryPolicy::ForwardError,
         );
-        assert_eq!(Err((2u8, 1)), block_on(f.into_future()));
+        assert_eq!(Err((2u8, 1)), f.await);
     }
 }

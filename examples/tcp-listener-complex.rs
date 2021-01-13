@@ -1,8 +1,10 @@
-use futures::TryStreamExt;
+use futures::prelude::*;
 use futures_retry::{ErrorHandler, RetryPolicy, StreamRetryExt};
 use std::time::Duration;
-use tokio::io::{self};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    io,
+    net::{TcpListener, TcpStream},
+};
 
 /// An I/O errors handler that counts consecutive error attempts.
 struct IoHandler<D> {
@@ -88,11 +90,14 @@ async fn process_connection((mut socket, _attempt): (TcpStream, usize)) -> io::R
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let addr = "127.0.0.1:12345";
-    let mut tcp = TcpListener::bind(addr).await.unwrap();
+    let tcp = TcpListener::bind(addr).await.unwrap();
 
-    tcp.incoming()
-        .retry(IoHandler::new(3, "Accepting connections"))
-        .map_err(|(x, _)| x)
-        .try_for_each(process_connection)
-        .await
+    stream::try_unfold(
+        tcp,
+        |tcp| async move { Ok(Some((tcp.accept().await?.0, tcp))) },
+    )
+    .retry(IoHandler::new(3, "Accepting connections"))
+    .map_err(|(x, _)| x)
+    .try_for_each(process_connection)
+    .await
 }

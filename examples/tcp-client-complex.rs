@@ -1,9 +1,8 @@
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::io;
+use tokio::io::{self, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::prelude::*;
 
 /// An I/O handler that counts attempts.
 struct IoHandler<D> {
@@ -27,7 +26,7 @@ where
     type OutError = io::Error;
 
     fn handle(&mut self, current_attempt: usize, e: io::Error) -> RetryPolicy<io::Error> {
-        if current_attempt > self.max_attempts {
+        if current_attempt >= self.max_attempts {
             eprintln!(
                 "[{}] All attempts ({}) have been used",
                 self.display_name, self.max_attempts
