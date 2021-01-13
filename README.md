@@ -52,15 +52,18 @@ async fn main() {
   let addr = //...
   # "127.0.0.1:12345";
   let mut listener = TcpListener::bind(addr).await.unwrap();
-  let server = listener.incoming()
-    .retry(handle_error) // Magic happens here
-    .and_then(|(stream, _attempt)| {
-      tokio::spawn(serve_connection(stream));
-      ok(())
-    })
-    .try_for_each(|_| ok(()))
-    .map_err(|(e, _attempt)| eprintln!("Caught an error {}", e));
+  let server = stream::try_unfold(listener, |listener| async move {
+    Ok(Some((listener.accept().await?.0, listener)))
+  })
+  .retry(handle_error) // Magic happens here
+  .and_then(|(stream, _attempt)| {
+    tokio::spawn(serve_connection(stream));
+    ok(())
+  })
+  .try_for_each(|_| ok(()))
+  .map_err(|(e, _attempt)| eprintln!("Caught an error {}", e));
   # // This nasty hack is required to exit immediately when running the doc tests.
+  # futures::pin_mut!(server);
   # let server = select(ok::<_, ()>(()), server).map(|_| ());
   server.await
 }
