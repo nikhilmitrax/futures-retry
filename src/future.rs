@@ -53,6 +53,7 @@ pin_project! {
         factory: F,
         error_action: R,
         attempt: usize,
+        end_time: Option<std::time::Instant>,
         #[pin]
         state: RetryState<F::FutureItem>,
     }
@@ -68,6 +69,28 @@ pin_project! {
 }
 
 impl<F: FutureFactory, R> FutureRetry<F, R> {
+    /// Creates a `FutureRetry` using a provided factory, timeout and an object of `ErrorHandler` type that
+    /// decides on a retry-policy depending on an encountered error.
+    ///
+    /// Please refer to the `tcp-client` example in the `examples` folder to have a look at a
+    /// possible usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `factory`: a factory that creates futures,
+    /// * `error_action`: a type that handles an error and decides which route to take: simply
+    ///                   try again, wait and then try, or give up (on a critical error for
+    ///                   exapmle).
+    /// * `timeout`: duration of time for the timeout
+    pub fn new_with_timeout(factory: F, error_action: R, timeout: std::time::Duration) -> Self {
+        Self {
+            factory,
+            error_action,
+            end_time: Some(std::time::Instant::now() + timeout),
+            state: RetryState::NotStarted,
+            attempt: 1,
+        }
+    }
     /// Creates a `FutureRetry` using a provided factory and an object of `ErrorHandler` type that
     /// decides on a retry-policy depending on an encountered error.
     ///
@@ -84,6 +107,7 @@ impl<F: FutureFactory, R> FutureRetry<F, R> {
         Self {
             factory,
             error_action,
+            end_time: None,
             state: RetryState::NotStarted,
             attempt: 1,
         }
@@ -100,6 +124,13 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             let this = self.as_mut().project();
+            // check if the timeout has occured, and panic out
+            //
+            if let Some(end_time) = this.end_time {
+                if std::time::Instant::now() >= *end_time {
+                    panic!("a future did not finish within its timeout")
+                }
+            }
             let attempt = *this.attempt;
             let new_state = match this.state.project() {
                 RetryStateProj::NotStarted => RetryState::WaitingForFuture {
